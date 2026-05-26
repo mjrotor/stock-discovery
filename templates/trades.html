@@ -1,0 +1,270 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Trade History</h1>
+</div>
+
+<!-- Filters -->
+<div class="card">
+    <div class="filters">
+        <div class="form-group">
+            <label>Date From</label>
+            <input type="date" class="form-control" id="filterFrom">
+        </div>
+        <div class="form-group">
+            <label>Date To</label>
+            <input type="date" class="form-control" id="filterTo">
+        </div>
+        <div class="form-group">
+            <label>Symbol</label>
+            <input type="text" class="form-control" id="filterSymbol" placeholder="e.g. AAPL">
+        </div>
+        <div class="form-group">
+            <label>Action</label>
+            <select class="form-control" id="filterAction">
+                <option value="">All</option>
+                <option value="BUY">Buy</option>
+                <option value="SELL">Sell</option>
+                <option value="STOP_LOSS">Stop Loss</option>
+            </select>
+        </div>
+        <button class="btn btn-primary" onclick="loadTrades()">Filter</button>
+        <button class="btn" onclick="clearFilters()">Clear</button>
+    </div>
+</div>
+
+<!-- Stats Row -->
+<div class="summary-grid" id="tradeStats">
+    <div class="summary-card">
+        <div class="label">Total Trades</div>
+        <div class="value" id="statTotal">—</div>
+    </div>
+    <div class="summary-card">
+        <div class="label">Win Rate</div>
+        <div class="value" id="statWinRate">—</div>
+    </div>
+    <div class="summary-card">
+        <div class="label">Avg Win</div>
+        <div class="value positive" id="statAvgWin">—</div>
+    </div>
+    <div class="summary-card">
+        <div class="label">Avg Loss</div>
+        <div class="value negative" id="statAvgLoss">—</div>
+    </div>
+</div>
+
+<!-- Charts -->
+<div class="grid-2">
+    <div class="card">
+        <div class="card-header"><span class="card-title">Cumulative P&L</span></div>
+        <div class="chart-container">
+            <canvas id="cumPnlChart"></canvas>
+        </div>
+    </div>
+    <div class="card">
+        <div class="card-header"><span class="card-title">Win/Loss Distribution</span></div>
+        <div class="chart-container">
+            <canvas id="distChart"></canvas>
+        </div>
+    </div>
+</div>
+
+<!-- Trades Table -->
+<div class="card">
+    <div class="card-header">
+        <span class="card-title">All Trades</span>
+        <span class="text-muted text-sm" id="tradeCount"></span>
+    </div>
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th data-sort="Date">Date ↕</th>
+                    <th data-sort="Action">Action ↕</th>
+                    <th data-sort="Symbol">Symbol ↕</th>
+                    <th data-sort="Shares">Shares ↕</th>
+                    <th data-sort="Price">Price ↕</th>
+                    <th data-sort="Cost">Cost ↕</th>
+                    <th data-sort="PnL%">P&L% ↕</th>
+                    <th data-sort="Reason">Reason ↕</th>
+                </tr>
+            </thead>
+            <tbody id="tradesTable">
+                <tr><td colspan="8" class="text-muted">Loading...</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let cumPnlChart = null;
+let distChart = null;
+let allTrades = [];
+
+async function loadTrades() {
+    try {
+        const params = {};
+        const from = document.getElementById('filterFrom').value;
+        const to = document.getElementById('filterTo').value;
+        const sym = document.getElementById('filterSymbol').value;
+        const action = document.getElementById('filterAction').value;
+        if (sym) params.symbol = sym;
+        if (action) params.action = action;
+
+        allTrades = await API.trades(params);
+
+        // Date filter client-side
+        let filtered = allTrades;
+        if (from) filtered = filtered.filter(t => t.Date >= from);
+        if (to) filtered = filtered.filter(t => t.Date <= to);
+
+        renderTrades(filtered);
+        renderStats(filtered);
+        renderCharts(filtered);
+    } catch (e) {
+        console.error('Trades load error:', e);
+        showToast('Error loading trades', 'error');
+    }
+}
+
+function renderTrades(trades) {
+    const tbody = document.getElementById('tradesTable');
+    document.getElementById('tradeCount').textContent = `${trades.length} trades`;
+
+    if (trades.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" class="text-muted">No trades found</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = trades.map(t => {
+        const pnl = parseFloat(t['PnL%'] || 0);
+        const isBuy = t.Action === 'BUY';
+        return `
+            <tr class="${isBuy ? '' : (pnl >= 0 ? 'profit' : 'loss')}">
+                <td>${t.Date || '—'}</td>
+                <td><span class="score-badge ${isBuy ? 'score-high' : 'score-low'}">${t.Action}</span></td>
+                <td><strong><a href="/ticker/${t.Symbol}" style="color:inherit;text-decoration:none;">${t.Symbol}</a></strong></td>
+                <td>{t.Shares || '—'}</td>
+                <td>${fmtCurrency(parseFloat(t.Price || 0))}</td>
+                <td>${fmtCurrency(parseFloat(t.Cost || 0))}</td>
+                <td class="${pnlClass(pnl)}">${t['PnL%'] ? fmtPct(pnl) : '—'}</td>
+                <td class="text-muted">${t.Reason || '—'}</td>
+            </tr>
+        `;
+    }).join('');
+}
+
+function renderStats(trades) {
+    const closed = trades.filter(t => t.Action !== 'BUY');
+    const wins = closed.filter(t => parseFloat(t['PnL%'] || 0) > 0);
+    const losses = closed.filter(t => parseFloat(t['PnL%'] || 0) <= 0);
+
+    document.getElementById('statTotal').textContent = closed.length;
+    document.getElementById('statWinRate').textContent = closed.length ? fmtPct(wins.length / closed.length * 100) : '—';
+    document.getElementById('statAvgWin').textContent = wins.length ? fmtPct(wins.reduce((s, t) => s + parseFloat(t['PnL%'] || 0), 0) / wins.length) : '—';
+    document.getElementById('statAvgLoss').textContent = losses.length ? fmtPct(losses.reduce((s, t) => s + parseFloat(t['PnL%'] || 0), 0) / losses.length) : '—';
+}
+
+function renderCharts(trades) {
+    const closed = trades.filter(t => t.Action !== 'BUY').sort((a, b) => a.Date.localeCompare(b.Date));
+
+    // Cumulative P&L
+    let running = 0;
+    const labels = [];
+    const data = [];
+    closed.forEach(t => {
+        running += parseFloat(t['PnL%'] || 0);
+        labels.push(t.Date?.slice(5, 10) || '');
+        data.push(running);
+    });
+
+    if (cumPnlChart) cumPnlChart.destroy();
+    const ctx = document.getElementById('cumPnlChart').getContext('2d');
+    cumPnlChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels.length ? labels : ['No data'],
+            datasets: [{
+                label: 'Cumulative P&L %',
+                data: data.length ? data : [0],
+                borderColor: '#58a6ff',
+                backgroundColor: 'rgba(88,166,255,0.1)',
+                fill: true,
+                tension: 0.3,
+                pointRadius: 2,
+            }]
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+                x: { grid: { color: '#30363d' }, ticks: { color: '#8b949e', font: { size: 11 } } },
+                y: { grid: { color: '#30363d' }, ticks: { color: '#8b949e', font: { size: 11 } } },
+            }
+        }
+    });
+
+    // Distribution histogram
+    const pnls = closed.map(t => parseFloat(t['PnL%'] || 0));
+    const bins = [-20, -15, -10, -5, -2, 0, 2, 5, 10, 15, 20];
+    const binLabels = [];
+    const binData = [];
+    for (let i = 0; i < bins.length - 1; i++) {
+        binLabels.push(`${bins[i]}% to ${bins[i+1]}%`);
+        binData.push(pnls.filter(p => p >= bins[i] && p < bins[i+1]).length);
+    }
+
+    if (distChart) distChart.destroy();
+    const ctx2 = document.getElementById('distChart').getContext('2d');
+    distChart = new Chart(ctx2, {
+        type: 'bar',
+        data: {
+            labels: binLabels.length ? binLabels : ['No data'],
+            datasets: [{
+                label: 'Trades',
+                data: binData.length ? binData : [0],
+                backgroundColor: (ctx) => {
+                    const idx = ctx.dataIndex;
+                    return idx < bins.length / 2 ? 'rgba(248,81,73,0.7)' : 'rgba(63,185,80,0.7)';
+                },
+                borderRadius: 3,
+            }]
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+                x: { grid: { display: false }, ticks: { color: '#8b949e', font: { size: 10 }, maxRotation: 45 } },
+                y: { grid: { color: '#30363d' }, ticks: { color: '#8b949e', font: { size: 11 } } },
+            }
+        }
+    });
+}
+
+function clearFilters() {
+    document.getElementById('filterFrom').value = '';
+    document.getElementById('filterTo').value = '';
+    document.getElementById('filterSymbol').value = '';
+    document.getElementById('filterAction').value = '';
+    loadTrades();
+}
+
+// Sortable columns
+document.querySelectorAll('th[data-sort]').forEach(th => {
+    th.addEventListener('click', () => {
+        const key = th.dataset.sort;
+        allTrades.sort((a, b) => {
+            const va = a[key] || '';
+            const vb = b[key] || '';
+            return va.localeCompare(vb);
+        });
+        renderTrades(allTrades);
+    });
+});
+
+loadTrades();
+</script>
+{% endblock %}

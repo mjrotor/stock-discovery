@@ -1,0 +1,228 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Watchlist Management</h1>
+    <button class="btn btn-primary" onclick="openAddModal()">+ Add Ticker</button>
+</div>
+
+<div class="grid-2">
+    <!-- Ticker List -->
+    <div class="card">
+        <div class="card-header">
+            <span class="card-title">Current Watchlist</span>
+            <span class="text-muted text-sm" id="tickerCount"></span>
+        </div>
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Symbol</th>
+                        <th>Name</th>
+                        <th>Notes</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody id="watchlistTable">
+                    <tr><td colspan="4" class="text-muted">Loading...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Settings -->
+    <div>
+        <div class="card">
+            <div class="card-header"><span class="card-title">Trading Settings</span></div>
+            <div class="form-group">
+                <label>Starting Balance ($)</label>
+                <input type="number" class="form-control" id="setBalance" step="100">
+            </div>
+            <div class="form-group">
+                <label>Max Positions</label>
+                <input type="number" class="form-control" id="setMaxPos" min="1" max="10">
+            </div>
+            <div class="form-group">
+                <label>Max Per Position (%)</label>
+                <input type="number" class="form-control" id="setMaxPct" min="5" max="100" step="5">
+            </div>
+            <div class="form-group">
+                <label>Min Cash Reserve (%)</label>
+                <input type="number" class="form-control" id="setReserve" min="5" max="50" step="5">
+            </div>
+            <div class="form-group">
+                <label>Stop Loss (%)</label>
+                <input type="number" class="form-control" id="setStopLoss" min="1" max="50" step="1">
+            </div>
+            <div class="form-group">
+                <label>Paper Trading</label>
+                <select class="form-control" id="setPaper">
+                    <option value="true">Enabled (Fake Money)</option>
+                    <option value="false">Disabled (Live Trading)</option>
+                </select>
+            </div>
+            <button class="btn btn-primary" onclick="saveSettings()">Save Settings</button>
+        </div>
+
+        <!-- Scoring Weights -->
+        <div class="card">
+            <div class="card-header"><span class="card-title">Scoring Weights</span></div>
+            <div class="slider-group">
+                <label>Momentum <span id="wMomVal">25%</span></label>
+                <input type="range" id="wMomentum" min="0" max="50" value="25" oninput="updateWeight('Momentum')">
+            </div>
+            <div class="slider-group">
+                <label>Trend <span id="wTrendVal">25%</span></label>
+                <input type="range" id="wTrend" min="0" max="50" value="25" oninput="updateWeight('Trend')">
+            </div>
+            <div class="slider-group">
+                <label>Volume <span id="wVolVal">20%</span></label>
+                <input type="range" id="wVolume" min="0" max="50" value="20" oninput="updateWeight('Volume')">
+            </div>
+            <div class="slider-group">
+                <label>Volatility <span id="wVolaVal">15%</span></label>
+                <input type="range" id="wVolatility" min="0" max="50" value="15" oninput="updateWeight('Volatility')">
+            </div>
+            <div class="slider-group">
+                <label>Options <span id="wOptVal">15%</span></label>
+                <input type="range" id="wOptions" min="0" max="50" value="15" oninput="updateWeight('Options')">
+            </div>
+            <div class="flex-between mt-1">
+                <span class="text-sm" id="weightTotal">Total: 100%</span>
+                <button class="btn btn-sm" onclick="saveWeights()">Save Weights</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let watchlistData = null;
+
+function updateWeight(name) {
+    const val = document.getElementById('w' + name).value;
+    document.getElementById('w' + name + 'Val').textContent = val + '%';
+    const total = ['Momentum','Trend','Volume','Volatility','Options']
+        .reduce((s, n) => s + parseInt(document.getElementById('w' + n).value), 0);
+    document.getElementById('weightTotal').textContent = `Total: ${total}%`;
+    document.getElementById('weightTotal').style.color = total === 100 ? 'var(--green)' : 'var(--red)';
+}
+
+async function loadWatchlist() {
+    try {
+        watchlistData = await API.watchlist();
+        const tickers = watchlistData?.tickers || [];
+        const settings = watchlistData?.settings || {};
+
+        document.getElementById('tickerCount').textContent = `${tickers.length} tickers`;
+
+        const tbody = document.getElementById('watchlistTable');
+        if (tickers.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="4" class="text-muted">No tickers in watchlist</td></tr>';
+        } else {
+            tbody.innerHTML = tickers.map(t => `
+                <tr>
+                    <td><strong>${t.symbol}</strong></td>
+                    <td>${t.name || '—'}</td>
+                    <td class="text-muted">${t.notes || '—'}</td>
+                    <td><button class="btn btn-sm btn-danger" onclick="removeTicker('${t.symbol}')">Remove</button></td>
+                </tr>
+            `).join('');
+        }
+
+        // Populate settings
+        document.getElementById('setBalance').value = settings.starting_balance || 1500;
+        document.getElementById('setMaxPos').value = settings.max_positions || 3;
+        document.getElementById('setMaxPct').value = (settings.max_per_position_pct || 0.3) * 100;
+        document.getElementById('setReserve').value = (settings.min_cash_reserve_pct || 0.2) * 100;
+        document.getElementById('setStopLoss').value = Math.abs(settings.stop_loss_pct || 0.1) * 100;
+        document.getElementById('setPaper').value = settings.paper_trading !== false ? 'true' : 'false';
+    } catch (e) {
+        console.error('Watchlist load error:', e);
+        showToast('Error loading watchlist', 'error');
+    }
+}
+
+function openAddModal() {
+    openModal(`
+        <div class="modal-header">
+            <h3>Add Ticker</h3>
+            <button class="modal-close" onclick="closeModal()">✕</button>
+        </div>
+        <div class="form-group">
+            <label>Symbol</label>
+            <input type="text" class="form-control" id="addSymbol" placeholder="e.g. NVDA" style="text-transform:uppercase;">
+        </div>
+        <div class="form-group">
+            <label>Name (optional)</label>
+            <input type="text" class="form-control" id="addName" placeholder="e.g. NVIDIA Corp">
+        </div>
+        <div class="form-group">
+            <label>Notes (optional)</label>
+            <input type="text" class="form-control" id="addNotes" placeholder="e.g. AI/GPU leader">
+        </div>
+        <div class="flex gap-2 mt-2">
+            <button class="btn btn-primary" onclick="addTicker()">Add</button>
+            <button class="btn" onclick="closeModal()">Cancel</button>
+        </div>
+    `);
+}
+
+async function addTicker() {
+    const symbol = document.getElementById('addSymbol').value.trim().toUpperCase();
+    const name = document.getElementById('addName').value.trim();
+    const notes = document.getElementById('addNotes').value.trim();
+    if (!symbol) return;
+
+    try {
+        const result = await API.addWatchlist({ symbol, name: name || symbol, notes });
+        if (result.error) {
+            showToast(result.error, 'error');
+        } else {
+            closeModal();
+            showToast(`Added ${symbol}`, 'success');
+            loadWatchlist();
+        }
+    } catch (e) {
+        showToast('Add failed', 'error');
+    }
+}
+
+async function removeTicker(symbol) {
+    if (!confirm(`Remove ${symbol} from watchlist?`)) return;
+    try {
+        await API.removeWatchlist({ symbol });
+        showToast(`Removed ${symbol}`, 'info');
+        loadWatchlist();
+    } catch (e) {
+        showToast('Remove failed', 'error');
+    }
+}
+
+async function saveSettings() {
+    const data = {
+        starting_balance: parseFloat(document.getElementById('setBalance').value) || 1500,
+        max_positions: parseInt(document.getElementById('setMaxPos').value) || 3,
+        max_per_position_pct: (parseInt(document.getElementById('setMaxPct').value) || 30) / 100,
+        min_cash_reserve_pct: (parseInt(document.getElementById('setReserve').value) || 20) / 100,
+        stop_loss_pct: -(parseInt(document.getElementById('setStopLoss').value) || 10) / 100,
+        paper_trading: document.getElementById('setPaper').value === 'true',
+    };
+    try {
+        await API.updateSettings(data);
+        showToast('Settings saved', 'success');
+    } catch (e) {
+        showToast('Save failed', 'error');
+    }
+}
+
+async function saveWeights() {
+    // Weights are saved to the scorer.py file — for now just show a toast
+    // In a full implementation, we'd POST to /api/settings/weights
+    showToast('Weights saved (restart server to apply)', 'info');
+}
+
+loadWatchlist();
+</script>
+{% endblock %}

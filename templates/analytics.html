@@ -1,0 +1,183 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Performance Analytics</h1>
+    <button class="btn btn-sm" onclick="loadAnalytics()">🔄 Refresh</button>
+</div>
+
+<!-- Summary Cards -->
+<div class="summary-grid" id="analyticsCards">
+    <div class="summary-card">
+        <div class="label">Total Return</div>
+        <div class="value" id="anTotalReturn">—</div>
+    </div>
+    <div class="summary-card">
+        <div class="label">Total P&L</div>
+        <div class="value" id="anTotalPnl">—</div>
+    </div>
+    <div class="summary-card">
+        <div class="label">Win Rate</div>
+        <div class="value" id="anWinRate">—</div>
+    </div>
+    <div class="summary-card">
+        <div class="label">Open Positions</div>
+        <div class="value" id="anOpenPos">—</div>
+    </div>
+</div>
+
+<!-- Equity Curve -->
+<div class="card mb-2">
+    <div class="card-header"><span class="card-title">Equity Curve</span></div>
+    <div class="chart-container">
+        <canvas id="equityChart"></canvas>
+    </div>
+</div>
+
+<!-- P&L by Ticker + Monthly -->
+<div class="grid-2">
+    <div class="card">
+        <div class="card-header"><span class="card-title">P&L by Ticker</span></div>
+        <div class="chart-container">
+            <canvas id="tickerPnlChart"></canvas>
+        </div>
+    </div>
+    <div class="card">
+        <div class="card-header"><span class="card-title">Score vs. Return</span></div>
+        <div class="chart-container">
+            <canvas id="scatterChart"></canvas>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let equityChart = null, tickerPnlChart = null, scatterChart = null;
+
+async function loadAnalytics() {
+    try {
+        const data = await API.analytics();
+
+        document.getElementById('anTotalReturn').textContent = fmtPct(data.total_pnl_pct);
+        document.getElementById('anTotalReturn').className = 'value ' + pnlClass(data.total_pnl_pct);
+        document.getElementById('anTotalPnl').textContent = (data.total_pnl >= 0 ? '+' : '') + fmtCurrency(data.total_pnl);
+        document.getElementById('anTotalPnl').className = 'value ' + pnlClass(data.total_pnl);
+        document.getElementById('anWinRate').textContent = data.win_rate + '%';
+        document.getElementById('anOpenPos').textContent = data.open_positions;
+
+        // Equity curve
+        renderEquityChart(data.cumulative_pnl);
+
+        // P&L by ticker
+        renderTickerPnl(data.ticker_pnl);
+
+        // Placeholder scatter
+        renderScatter(data.cumulative_pnl);
+    } catch (e) {
+        console.error('Analytics error:', e);
+        showToast('Error loading analytics', 'error');
+    }
+}
+
+function renderEquityChart(cumulative) {
+    if (equityChart) equityChart.destroy();
+    const labels = (cumulative || []).map(d => d.date?.slice(5, 10) || '');
+    const data = (cumulative || []).map(d => d.pnl);
+
+    const ctx = document.getElementById('equityChart').getContext('2d');
+    equityChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels.length ? labels : ['No data'],
+            datasets: [{
+                label: 'Cumulative P&L %',
+                data: data.length ? data : [0],
+                borderColor: '#58a6ff',
+                backgroundColor: (ctx) => {
+                    const chart = ctx.chart;
+                    const {ctx: c, chartArea} = chart;
+                    if (!chartArea) return 'rgba(88,166,255,0.15)';
+                    const gradient = c.createLinearGradient(0, chartArea.top, 0, chartArea.bottom);
+                    gradient.addColorStop(0, 'rgba(88,166,255,0.25)');
+                    gradient.addColorStop(1, 'rgba(88,166,255,0)');
+                    return gradient;
+                },
+                fill: true,
+                tension: 0.3,
+                pointRadius: 0,
+                borderWidth: 2,
+            }]
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+                x: { grid: { color: '#30363d' }, ticks: { color: '#8b949e', font: { size: 11 }, maxTicksLimit: 12 } },
+                y: { grid: { color: '#30363d' }, ticks: { color: '#8b949e', font: { size: 11 } } },
+            }
+        }
+    });
+}
+
+function renderTickerPnl(tickerPnl) {
+    if (tickerPnlChart) tickerPnlChart.destroy();
+    const entries = Object.entries(tickerPnl || {}).sort((a, b) => b[1] - a[1]);
+    const labels = entries.map(e => e[0]);
+    const data = entries.map(e => e[1]);
+    const colors = data.map(v => v >= 0 ? 'rgba(63,185,80,0.7)' : 'rgba(248,81,73,0.7)');
+
+    const ctx = document.getElementById('tickerPnlChart').getContext('2d');
+    tickerPnlChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: labels.length ? labels : ['No data'],
+            datasets: [{
+                label: 'P&L %',
+                data: data.length ? data : [0],
+                backgroundColor: colors.length ? colors : ['#30363d'],
+                borderRadius: 3,
+            }]
+        },
+        options: {
+            indexAxis: 'y',
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+                x: { grid: { color: '#30363d' }, ticks: { color: '#8b949e', font: { size: 11 } } },
+                y: { grid: { display: false }, ticks: { color: '#8b949e', font: { size: 11 } } },
+            }
+        }
+    });
+}
+
+function renderScatter(cumulative) {
+    if (scatterChart) scatterChart.destroy();
+    // Use cumulative P&L points as placeholder scatter
+    const points = (cumulative || []).map((d, i) => ({ x: i, y: d.pnl }));
+
+    const ctx = document.getElementById('scatterChart').getContext('2d');
+    scatterChart = new Chart(ctx, {
+        type: 'scatter',
+        data: {
+            datasets: [{
+                label: 'P&L Progress',
+                data: points.length ? points : [{x: 0, y: 0}],
+                backgroundColor: points.map(p => p.y >= 0 ? 'rgba(63,185,80,0.7)' : 'rgba(248,81,73,0.7)'),
+                pointRadius: 4,
+            }]
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+                x: { grid: { color: '#30363d' }, ticks: { color: '#8b949e', font: { size: 11 } }, title: { display: true, text: 'Trade #', color: '#8b949e' } },
+                y: { grid: { color: '#30363d' }, ticks: { color: '#8b949e', font: { size: 11 } }, title: { display: true, text: 'Cumulative P&L %', color: '#8b949e' } },
+            }
+        }
+    });
+}
+
+loadAnalytics();
+</script>
+{% endblock %}

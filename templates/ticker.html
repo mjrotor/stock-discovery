@@ -1,0 +1,283 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div id="tickerPage">
+    <div class="text-muted" style="padding: 40px; text-align: center;">Loading ticker data...</div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const SYMBOL = '{{ symbol }}';
+let priceChart = null;
+
+async function loadTicker() {
+    try {
+        const data = await API.ticker(SYMBOL);
+        if (data.error) {
+            document.getElementById('tickerPage').innerHTML = `<div class="text-muted" style="padding:40px;text-align:center;">Error: ${data.error}</div>`;
+            return;
+        }
+
+        const ohlcv = data.ohlcv || [];
+        const change = data.prev_close ? ((data.price / data.prev_close - 1) * 100) : 0;
+        const last = ohlcv[ohlcv.length - 1] || {};
+        const first = ohlcv[0] || {};
+
+        // Compute stats
+        const highs = ohlcv.map(d => d.high);
+        const lows = ohlcv.map(d => d.low);
+        const vols = ohlcv.map(d => d.volume);
+        const high52 = Math.max(...highs);
+        const low52 = Math.min(...lows);
+        const avgVol = vols.length > 20 ? vols.slice(-21, -1).reduce((a, b) => a + b, 0) / 20 : (vols.reduce((a, b) => a + b, 0) / vols.length);
+        const todayVol = vols[vols.length - 1] || 0;
+        const relVol = avgVol ? todayVol / avgVol : 1;
+
+        // Find existing position
+        let existingPosition = null;
+        try {
+            const portfolio = await API.portfolio();
+            existingPosition = (portfolio?.portfolio?.open_positions || []).find(p => p.symbol === SYMBOL);
+        } catch (e) { /* ignore */ }
+
+        document.getElementById('tickerPage').innerHTML = `
+            <div class="flex-between mb-2">
+                <div>
+                    <h1>${data.name} <span class="text-muted" style="font-size:16px">${SYMBOL}</span></h1>
+                </div>
+                <div class="flex gap-2">
+                    ${existingPosition
+                        ? `<button class="btn btn-danger" onclick="closePos('${existingPosition.id}')">Close Position (${existingPosition.shares}x)</button>`
+                        : `<button class="btn btn-primary" onclick="buyTicker('${SYMBOL}', ${data.price})">Buy</button>`
+                    }
+                </div>
+            </div>
+
+            <!-- Summary -->
+            <div class="summary-grid mb-2">
+                <div class="summary-card">
+                    <div class="label">Price</div>
+                    <div class="value">${fmtCurrency(data.price)}</div>
+                    <div class="sub ${pnlClass(change)}">${change >= 0 ? '+' : ''}${fmt(change)}%</div>
+                </div>
+                <div class="summary-card">
+                    <div class="label">52W High</div>
+                    <div class="value">${fmtCurrency(high52)}</div>
+                </div>
+                <div class="summary-card">
+                    <div class="label">52W Low</div>
+                    <div class="value">${fmtCurrency(low52)}</div>
+                </div>
+                <div class="summary-card">
+                    <div class="label">Relative Volume</div>
+                    <div class="value">${relVol.toFixed(2)}x</div>
+                    <div class="sub text-muted">Today: ${(todayVol / 1e6).toFixed(1)}M</div>
+                </div>
+            </div>
+
+            <!-- Candlestick Chart -->
+            <div class="card mb-2">
+                <div class="card-header"><span class="card-title">Price Chart (3 months)</span></div>
+                <div class="chart-container" style="height: 350px;">
+                    <canvas id="priceChart"></canvas>
+                </div>
+            </div>
+
+            <!-- Stats Table -->
+            <div class="card">
+                <div class="card-header"><span class="card-title">Key Stats</span></div>
+                <div class="grid-3 text-sm">
+                    <div><span class="text-muted">Open:</span> ${fmtCurrency(last.open)}</div>
+                    <div><span class="text-muted">High:</span> ${fmtCurrency(last.high)}</div>
+                    <div><span class="text-muted">Low:</span> ${fmtCurrency(last.low)}</div>
+                    <div><span class="text-muted">Avg Volume (20d):</span> ${(avgVol / 1e6).toFixed(1)}M</div>
+                    <div><span class="text-muted">Today's Volume:</span> ${(todayVol / 1e6).toFixed(1)}M</div>
+                    <div><span class="text-muted">Data Points:</span> ${ohlcv.length}</div>
+                </div>
+            </div>
+
+            ${existingPosition ? `
+            <div class="card" style="border-color:var(--blue);">
+                <div class="card-header"><span class="card-title">Your Position</span></div>
+                <div class="grid-3 text-sm">
+                    <div><span class="text-muted">Shares:</span> ${existingPosition.shares}</div>
+                    <div><span class="text-muted">Entry:</span> ${fmtCurrency(existingPosition.entry_price)}</div>
+                    <div><span class="text-muted">Current:</span> ${fmtCurrency(existingPosition.current_price)}</div>
+                    <div><span class="text-muted">Cost:</span> ${fmtCurrency(existingPosition.cost)}</div>
+                    <div class="${pnlClass(existingPosition.pnl)}"><span class="text-muted">P&L:</span> ${existingPosition.pnl >= 0 ? '+' : ''}${fmtCurrency(existingPosition.pnl)} (${fmtPct(existingPosition.pnl_pct)})</div>
+                    <div><span class="text-muted">Score at Entry:</span> ${existingPosition.score_at_entry || '—'}</div>
+                </div>
+            </div>
+            ` : ''}
+        `;
+
+        // Render candlestick-like chart (line chart of closes + volume)
+        renderPriceChart(ohlcv);
+    } catch (e) {
+        console.error('Ticker load error:', e);
+        document.getElementById('tickerPage').innerHTML = `<div class="text-muted" style="padding:40px;text-align:center;">Error loading ${SYMBOL}</div>`;
+    }
+}
+
+function renderPriceChart(ohlcv) {
+    if (priceChart) priceChart.destroy();
+
+    // Compute SMAs
+    const closes = ohlcv.map(d => d.close);
+    const sma10 = closes.map((_, i) => {
+        if (i < 9) return null;
+        return closes.slice(i - 9, i + 1).reduce((a, b) => a + b, 0) / 10;
+    });
+    const sma20 = closes.map((_, i) => {
+        if (i < 19) return null;
+        return closes.slice(i - 19, i + 1).reduce((a, b) => a + b, 0) / 20;
+    });
+
+    // SMA line chart (candlestick without external lib)
+    const ctx = document.getElementById('priceChart').getContext('2d');
+    const labels = ohlcv.map(d => d.date.slice(5)); // MM-DD
+
+    // Color segments based on close vs open
+    const segmentColors = ohlcv.map(d => d.close >= d.open ? '#3fb950' : '#f85149');
+
+    priceChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    type: 'line',
+                    label: 'Close',
+                    data: closes,
+                    borderColor: '#58a6ff',
+                    backgroundColor: 'transparent',
+                    borderWidth: 2,
+                    pointRadius: 0,
+                    tension: 0.1,
+                    yAxisID: 'y',
+                },
+                {
+                    type: 'line',
+                    label: 'SMA 10',
+                    data: sma10,
+                    borderColor: '#d29922',
+                    backgroundColor: 'transparent',
+                    borderWidth: 1,
+                    pointRadius: 0,
+                    borderDash: [4, 4],
+                    yAxisID: 'y',
+                },
+                {
+                    type: 'line',
+                    label: 'SMA 20',
+                    data: sma20,
+                    borderColor: '#f85149',
+                    backgroundColor: 'transparent',
+                    borderWidth: 1,
+                    pointRadius: 0,
+                    borderDash: [2, 2],
+                    yAxisID: 'y',
+                },
+                {
+                    type: 'bar',
+                    label: 'Volume',
+                    data: ohlcv.map(d => d.volume),
+                    backgroundColor: ohlcv.map(d => d.close >= d.open ? 'rgba(63,185,80,0.3)' : 'rgba(248,81,73,0.3)'),
+                    yAxisID: 'y1',
+                    barThickness: 2,
+                },
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                legend: { labels: { color: '#8b949e', font: { size: 11 } } },
+            },
+            scales: {
+                x: { grid: { color: '#30363d' }, ticks: { color: '#8b949e', font: { size: 11 }, maxTicksLimit: 12 } },
+                y: {
+                    position: 'left',
+                    grid: { color: '#30363d' },
+                    ticks: { color: '#8b949e', font: { size: 11 }, callback: v => '$' + v.toFixed(0) },
+                },
+                y1: {
+                    position: 'right',
+                    grid: { display: false },
+                    ticks: { display: false },
+                    min: 0,
+                },
+            }
+        }
+    });
+}
+
+function buyTicker(symbol, price) {
+    const maxShares = Math.floor(450 / price);
+    openModal(`
+        <div class="modal-header">
+            <h3>Buy ${symbol}</h3>
+            <button class="modal-close" onclick="closeModal()">✕</button>
+        </div>
+        <div class="form-group">
+            <label>Price</label>
+            <div class="form-control" style="background:var(--bg-hover)">${fmtCurrency(price)}</div>
+        </div>
+        <div class="form-group">
+            <label>Shares (max ~${maxShares})</label>
+            <input type="number" class="form-control" id="buyShares" value="1" min="1" max="${maxShares}">
+        </div>
+        <div class="form-group">
+            <label>Est. Cost</label>
+            <div class="form-control" id="estCost">${fmtCurrency(price)}</div>
+        </div>
+        <div class="flex gap-2 mt-2">
+            <button class="btn btn-primary" onclick="execBuy(${price})">Confirm Buy</button>
+            <button class="btn" onclick="closeModal()">Cancel</button>
+        </div>
+    `);
+    document.getElementById('buyShares').addEventListener('input', (e) => {
+        document.getElementById('estCost').textContent = fmtCurrency(e.target.value * price);
+    });
+}
+
+async function execBuy(price) {
+    const shares = parseInt(document.getElementById('buyShares').value);
+    if (!shares || shares <= 0) return;
+    try {
+        const result = await API.buy({ symbol: SYMBOL, shares, price, name: SYMBOL });
+        if (result.error) {
+            showToast(result.error, 'error');
+        } else {
+            closeModal();
+            showToast(`Bought ${shares}x ${SYMBOL}`, 'success');
+            loadTicker();
+        }
+    } catch (e) {
+        showToast('Buy failed', 'error');
+    }
+}
+
+async function closePos(posId) {
+    if (!confirm(`Close position ${SYMBOL}?`)) return;
+    try {
+        const portfolio = await API.portfolio();
+        const pos = portfolio?.portfolio?.open_positions?.find(p => p.id === posId);
+        if (!pos) return;
+        const result = await API.close({ position_id: posId, price: pos.current_price });
+        if (result.error) {
+            showToast(result.error, 'error');
+        } else {
+            showToast(`Closed ${SYMBOL}: ${fmtPct(result.pnl_pct)}`, result.pnl >= 0 ? 'success' : 'error');
+            loadTicker();
+        }
+    } catch (e) {
+        showToast('Close failed', 'error');
+    }
+}
+
+loadTicker();
+</script>
+{% endblock %}

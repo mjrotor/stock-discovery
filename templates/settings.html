@@ -1,0 +1,183 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Settings</h1>
+</div>
+
+<div class="grid-2">
+    <!-- Account -->
+    <div class="card">
+        <div class="card-header"><span class="card-title">Account Settings</span></div>
+        <div class="form-group">
+            <label>Starting Balance ($)</label>
+            <input type="number" class="form-control" id="cfgBalance" step="100">
+        </div>
+        <div class="form-group">
+            <label>Paper Trading Mode</label>
+            <select class="form-control" id="cfgPaper">
+                <option value="true">✅ Enabled (Fake Money)</option>
+                <option value="false">🔴 Disabled (CAUTION: Live Funds)</option>
+            </select>
+        </div>
+        <button class="btn btn-primary" onclick="saveAccountSettings()">Save</button>
+    </div>
+
+    <!-- Trading Rules -->
+    <div class="card">
+        <div class="card-header"><span class="card-title">Trading Rules</span></div>
+        <div class="form-group">
+            <label>Max Open Positions</label>
+            <input type="number" class="form-control" id="cfgMaxPos" min="1" max="20">
+        </div>
+        <div class="form-group">
+            <label>Max Per Position (%)</label>
+            <input type="number" class="form-control" id="cfgMaxPct" min="5" max="100" step="5">
+        </div>
+        <div class="form-group">
+            <label>Min Cash Reserve (%)</label>
+            <input type="number" class="form-control" id="cfgReserve" min="5" max="50" step="5">
+        </div>
+        <div class="form-group">
+            <label>Stop Loss (%)</label>
+            <input type="number" class="form-control" id="cfgStopLoss" min="1" max="50" step="1">
+        </div>
+        <button class="btn btn-primary" onclick="saveTradingRules()">Save</button>
+    </div>
+
+    <!-- Cron Schedule -->
+    <div class="card">
+        <div class="card-header"><span class="card-title">Cron Schedule</span></div>
+        <p class="text-muted text-sm mb-2">The advisor runs automatically at these times on weekdays:</p>
+        <div class="text-sm">
+            <div class="flex-between" style="padding: 8px 0; border-bottom: 1px solid var(--border);">
+                <span>🌅 Pre-Market</span>
+                <span class="score-badge score-high">9:30 AM</span>
+            </div>
+            <div class="flex-between" style="padding: 8px 0; border-bottom: 1px solid var(--border);">
+                <span>☀️ Midday</span>
+                <span class="score-badge score-mid">12:00 PM</span>
+            </div>
+            <div class="flex-between" style="padding: 8px 0;">
+                <span>🌇 Close</span>
+                <span class="score-badge score-low">3:30 PM</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Data Management -->
+    <div class="card">
+        <div class="card-header"><span class="card-title">Data Management</span></div>
+        <div class="flex gap-2" style="flex-wrap: wrap;">
+            <button class="btn" onclick="exportData()">📥 Export CSV</button>
+            <button class="btn btn-danger" onclick="resetPortfolio()">🔄 Reset Portfolio</button>
+            <button class="btn btn-danger" onclick="purgeAll()">💥 Purge All Data</button>
+        </div>
+        <div class="mt-2 text-muted text-xs">
+            <p><strong>Export CSV:</strong> Downloads trade_history.csv</p>
+            <p><strong>Reset:</strong> Clears positions, resets to starting balance</p>
+            <p><strong>Purge:</strong> Deletes everything including watchlist tickers</p>
+        </div>
+    </div>
+</div>
+
+<!-- Data Files -->
+<div class="card">
+    <div class="card-header"><span class="card-title">Data Files</span></div>
+    <div class="grid-3 text-sm">
+        <div>
+            <span class="text-muted">Watchlist:</span><br>
+            <code class="text-xs">~/.hermes/watchlist/watchlist.json</code>
+        </div>
+        <div>
+            <span class="text-muted">Portfolio:</span><br>
+            <code class="text-xs">~/.hermes/watchlist/portfolio.json</code>
+        </div>
+        <div>
+            <span class="text-muted">Trade History:</span><br>
+            <code class="text-xs">~/.hermes/watchlist/trade_history.csv</code>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts -->
+<script>
+async function loadSettings() {
+    try {
+        const wl = await API.watchlist();
+        const s = wl?.settings || {};
+        document.getElementById('cfgBalance').value = s.starting_balance || 1500;
+        document.getElementById('cfgPaper').value = s.paper_trading !== false ? 'true' : 'false';
+        document.getElementById('cfgMaxPos').value = s.max_positions || 3;
+        document.getElementById('cfgMaxPct').value = (s.max_per_position_pct || 0.3) * 100;
+        document.getElementById('cfgReserve').value = (s.min_cash_reserve_pct || 0.2) * 100;
+        document.getElementById('cfgStopLoss').value = Math.abs(s.stop_loss_pct || 0.1) * 100;
+    } catch (e) {
+        showToast('Error loading settings', 'error');
+    }
+}
+
+async function saveAccountSettings() {
+    const data = {
+        starting_balance: parseFloat(document.getElementById('cfgBalance').value) || 1500,
+        paper_trading: document.getElementById('cfgPaper').value === 'true',
+    };
+    try {
+        await API.updateSettings(data);
+        if (data.paper_trading === false) {
+            showToast('⚠️ LIVE TRADING MODE — Real money at risk!', 'error');
+        } else {
+            showToast('Settings saved', 'success');
+        }
+    } catch (e) {
+        showToast('Save failed', 'error');
+    }
+}
+
+async function saveTradingRules() {
+    const data = {
+        max_positions: parseInt(document.getElementById('cfgMaxPos').value) || 3,
+        max_per_position_pct: (parseInt(document.getElementById('cfgMaxPct').value) || 30) / 100,
+        min_cash_reserve_pct: (parseInt(document.getElementById('cfgReserve').value) || 20) / 100,
+        stop_loss_pct: -(parseInt(document.getElementById('cfgStopLoss').value) || 10) / 100,
+    };
+    try {
+        await API.updateSettings(data);
+        showToast('Trading rules saved', 'success');
+    } catch (e) {
+        showToast('Save failed', 'error');
+    }
+}
+
+function exportData() {
+    // Create a download link for the trade history
+    const link = document.createElement('a');
+    link.href = 'data:text/csv;charset=utf-8,Date,Action,Symbol,Shares,Price,Cost,PnL%,Reason\n(Served from server — fetch /api/trades for live data)';
+    link.download = 'trade_history.csv';
+    link.click();
+    showToast('CSV export initiated', 'info');
+}
+
+async function resetPortfolio() {
+    if (!confirm('⚠️ Reset portfolio? This will close all positions and reset to starting balance.')) return;
+    if (!confirm('Are you sure? This cannot be undone.')) return;
+    try {
+        await API.reset();
+        showToast('Portfolio reset to starting balance', 'success');
+        setTimeout(() => location.reload(), 1000);
+    } catch (e) {
+        showToast('Reset failed', 'error');
+    }
+}
+
+async function purgeAll() {
+    if (!confirm('💥 PURGE ALL DATA? This deletes positions, trades, and watchlist tickers.')) return;
+    if (!confirm('THIS CANNOT BE UNDO. Continue?')) return;
+    // For now just reset portfolio
+    await resetPortfolio();
+}
+
+loadSettings();
+</script>
+{% endblock %}

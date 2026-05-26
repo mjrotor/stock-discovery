@@ -1,0 +1,24 @@
+{
+  "settings": {
+    "max_positions": 3,
+    "max_per_position_pct": 0.30,
+    "min_cash_reserve_pct": 0.20,
+    "stop_loss_pct": -0.10,
+    "starting_balance": 1500.00,
+    "paper_trading": true
+  },
+  "tickers": [
+    {"symbol": "NVDA", "name": "NVIDIA Corp", "type": "stock", "notes": "AI/GPU leader"},
+    {"symbol": "AAPL", "name": "Apple Inc", "type": "stock", "notes": "Large cap tech"},
+    {"symbol": "TSLA", "name": "Tesla Inc", "type": "stock", "notes": "High volatility"},
+    {"symbol": "AMZN", "name": "Amazon.com", "type": "stock", "notes": "Cloud + retail"},
+    {"symbol": "MSFT", "name": "Microsoft Corp", "type": "stock", "notes": "AI + cloud"},
+    {"symbol": "META", "name": "Meta Platforms", "type": "stock", "notes": "Social + AI"},
+    {"symbol": "GOOGL", "name": "Alphabet Inc", "type": "stock", "notes": "Search + AI"},
+    {"symbol": "SPY", "name": "S&P 500 ETF", "type": "stock", "notes": "Index ETF"},
+    {"symbol": "QQQ", "name": "Nasdaq 100 ETF", "type": "stock", "notes": "Tech ETF"},
+    {"symbol": "AMD", "name": "AMD Inc", "type": "stock", "notes": "Semiconductor"},
+    {"symbol": "PLTR", "name": "Palantir", "type": "stock", "notes": "AI data analytics"},
+    {"symbol": "COIN", "name": "Coinbase", "type": "stock", "notes": "Crypto exchange"}
+  ]
+}

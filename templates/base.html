@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stock Discovery — Watchlist Dashboard</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+    <!-- Sidebar -->
+    <nav class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <span class="logo">📊</span>
+            <span class="logo-text">Stock Discovery</span>
+        </div>
+        <ul class="nav-links">
+            <li class="nav-item active" data-page="dashboard">
+                <a href="/"><span class="icon">🏠</span><span class="label">Dashboard</span></a>
+            </li>
+            <li class="nav-item" data-page="trades">
+                <a href="/trades"><span class="icon">📋</span><span class="label">Trades</span></a>
+            </li>
+            <li class="nav-item" data-page="watchlist">
+                <a href="/watchlist"><span class="icon">⭐</span><span class="label">Watchlist</span></a>
+            </li>
+            <li class="nav-item" data-page="analytics">
+                <a href="/analytics"><span class="icon">📈</span><span class="label">Analytics</span></a>
+            </li>
+            <li class="nav-item" data-page="settings">
+                <a href="/settings"><span class="icon">⚙️</span><span class="label">Settings</span></a>
+            </li>
+        </ul>
+        <div class="sidebar-footer">
+            <div class="mode-toggle">
+                <button id="themeToggle" class="btn-icon" title="Toggle theme">🌙</button>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        <button class="sidebar-toggle" id="sidebarToggle">☰</button>
+        {% block content %}{% endblock %}
+    </main>
+
+    <!-- Toast container -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <!-- Modal container -->
+    <div class="modal-overlay" id="modalOverlay">
+        <div class="modal" id="modalContent"></div>
+    </div>
+
+    <script src="/static/app.js"></script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>
