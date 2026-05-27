@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Deposit Funds — Stock Discovery</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <style>
+    .deposit-wrap {
+      max-width: 480px;
+      margin: 80px auto 0;
+      padding: 0 16px;
+    }
+    .deposit-card {
+      background: #1a1a2e;
+      border: 1px solid #2a2a4a;
+      border-radius: 12px;
+      padding: 32px;
+    }
+    .deposit-card h1 {
+      font-size: 1.4rem;
+      margin: 0 0 8px;
+      color: #e0e0ff;
+    }
+    .deposit-card p.sub {
+      color: #8888aa;
+      font-size: 0.85rem;
+      margin: 0 0 24px;
+    }
+    .form-group {
+      margin-bottom: 16px;
+    }
+    .form-group label {
+      display: block;
+      font-size: 0.8rem;
+      color: #8888aa;
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .form-group input {
+      width: 100%;
+      padding: 10px 14px;
+      background: #0d0d1a;
+      border: 1px solid #2a2a4a;
+      border-radius: 8px;
+      color: #e0e0ff;
+      font-size: 1rem;
+      box-sizing: border-box;
+    }
+    .form-group input:focus {
+      outline: none;
+      border-color: #4a6cf7;
+    }
+    .btn-deposit {
+      width: 100%;
+      padding: 12px;
+      background: linear-gradient(135deg, #4a6cf7, #6c5ce7);
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 8px;
+    }
+    .btn-deposit:hover { opacity: 0.9; }
+    .btn-deposit:disabled { opacity: 0.5; cursor: not-allowed; }
+    .result-msg {
+      margin-top: 16px;
+      padding: 12px;
+      border-radius: 8px;
+      font-size: 0.9rem;
+      display: none;
+    }
+    .result-msg.success { background: #0a2a1a; border: 1px solid #1a4a2a; color: #4ade80; }
+    .result-msg.error   { background: #2a0a0a; border: 1px solid #4a1a1a; color: #f87171; }
+    .back-link {
+      display: block;
+      text-align: center;
+      margin-top: 20px;
+      color: #6666aa;
+      font-size: 0.85rem;
+      text-decoration: none;
+    }
+    .back-link:hover { color: #8888cc; }
+  </style>
+</head>
+<body>
+  <div class="deposit-wrap">
+    <div class="deposit-card">
+      <h1>💰 Deposit Funds</h1>
+      <p class="sub">Add cash to your paper trading account</p>
+
+      <div class="form-group">
+        <label for="password">Password</label>
+        <input type="password" id="password" placeholder="Enter deposit password" autocomplete="off" />
+      </div>
+
+      <div class="form-group">
+        <label for="amount">Amount ($)</label>
+        <input type="number" id="amount" min="0.01" max="1000000" step="0.01" placeholder="e.g. 500.00" />
+      </div>
+
+      <div class="form-group">
+        <label for="note">Note (optional)</label>
+        <input type="text" id="note" placeholder="e.g. Monthly top-up" />
+      </div>
+
+      <button class="btn-deposit" id="btnDeposit" onclick="doDeposit()">Deposit</button>
+
+      <div class="result-msg" id="resultMsg"></div>
+    </div>
+    <a href="/" class="back-link">← Back to Dashboard</a>
+  </div>
+
+  <script>
+    async function doDeposit() {
+      const password = document.getElementById('password').value.trim();
+      const amount = parseFloat(document.getElementById('amount').value);
+      const note = document.getElementById('note').value.trim();
+      const btn = document.getElementById('btnDeposit');
+      const msg = document.getElementById('resultMsg');
+
+      if (!password) { showMsg('Please enter the deposit password', 'error'); return; }
+      if (!amount || amount <= 0) { showMsg('Please enter a valid amount', 'error'); return; }
+      if (amount > 1000000) { showMsg('Maximum deposit is $1,000,000', 'error'); return; }
+
+      btn.disabled = true;
+      btn.textContent = 'Processing...';
+      hideMsg();
+
+      try {
+        const resp = await fetch('/api/deposit', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password, amount, note }),
+        });
+        const data = await resp.json();
+
+        if (data.ok) {
+          showMsg(
+            `✅ Deposited <strong>$${data.deposited.toLocaleString('en-US', {minimumFractionDigits: 2})}</strong><br>` +
+            `New cash balance: <strong>$${data.portfolio.cash.toLocaleString('en-US', {minimumFractionDigits: 2})}</strong><br>` +
+            `Total value: <strong>$${data.portfolio.total_value.toLocaleString('en-US', {minimumFractionDigits: 2})}</strong>`,
+            'success'
+          );
+          document.getElementById('amount').value = '';
+          document.getElementById('note').value = '';
+        } else {
+          showMsg(`❌ ${data.error || 'Deposit failed'}`, 'error');
+        }
+      } catch (err) {
+        showMsg(`❌ Network error: ${err.message}`, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Deposit';
+      }
+    }
+
+    function showMsg(html, type) {
+      const msg = document.getElementById('resultMsg');
+      msg.innerHTML = html;
+      msg.className = 'result-msg ' + type;
+      msg.style.display = 'block';
+    }
+
+    function hideMsg() {
+      document.getElementById('resultMsg').style.display = 'none';
+    }
+
+    // Allow Enter key to submit
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') doDeposit();
+    });
+  </script>
+</body>
+</html>
