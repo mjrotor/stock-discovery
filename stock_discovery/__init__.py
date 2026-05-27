@@ -1,0 +1,1 @@
+# Stock Discovery Python package
