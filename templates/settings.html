@@ -107,13 +107,14 @@ async function loadSettings() {
     try {
         const wl = await API.watchlist();
         const s = wl?.settings || {};
-        document.getElementById('cfgBalance').value = s.starting_balance || 1500;
-        document.getElementById('cfgPaper').value = s.paper_trading !== false ? 'true' : 'false';
-        document.getElementById('cfgMaxPos').value = s.max_positions || 3;
-        document.getElementById('cfgMaxPct').value = (s.max_per_position_pct || 0.3) * 100;
-        document.getElementById('cfgReserve').value = (s.min_cash_reserve_pct || 0.2) * 100;
-        document.getElementById('cfgStopLoss').value = Math.abs(s.stop_loss_pct || 0.1) * 100;
+        document.getElementById('cfgBalance').value = s.starting_balance ?? 1500;
+        document.getElementById('cfgPaper').value = s.paper_trading === false ? 'false' : 'true';
+        document.getElementById('cfgMaxPos').value = s.max_positions ?? 3;
+        document.getElementById('cfgMaxPct').value = ((s.max_per_position_pct ?? 0.3) * 100);
+        document.getElementById('cfgReserve').value = ((s.min_cash_reserve_pct ?? 0.2) * 100);
+        document.getElementById('cfgStopLoss').value = Math.abs(s.stop_loss_pct ?? 0.1) * 100;
     } catch (e) {
+        console.error('Settings load error:', e);
         showToast('Error loading settings', 'error');
     }
 }

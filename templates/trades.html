@@ -115,6 +115,7 @@ async function loadTrades() {
         if (action) params.action = action;
 
         allTrades = await API.trades(params);
+        if (!Array.isArray(allTrades)) allTrades = [];
 
         // Date filter client-side
         let filtered = allTrades;
@@ -158,7 +159,7 @@ function renderTrades(trades) {
 }
 
 function renderStats(trades) {
-    const closed = trades.filter(t => t.Action !== 'BUY');
+    const closed = trades.filter(t => (t.Action || '').toUpperCase() !== 'BUY');
     const wins = closed.filter(t => parseFloat(t['PnL%'] || 0) > 0);
     const losses = closed.filter(t => parseFloat(t['PnL%'] || 0) <= 0);
 
@@ -169,7 +170,7 @@ function renderStats(trades) {
 }
 
 function renderCharts(trades) {
-    const closed = trades.filter(t => t.Action !== 'BUY').sort((a, b) => a.Date.localeCompare(b.Date));
+    const closed = trades.filter(t => (t.Action || '').toUpperCase() !== 'BUY').sort((a, b) => a.Date.localeCompare(b.Date));
 
     // Cumulative P&L
     let running = 0;

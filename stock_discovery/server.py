@@ -59,22 +59,31 @@ def settings():
 
 @app.route("/api/portfolio")
 def api_portfolio():
-    portfolio = db.get_portfolio_summary()
-    return jsonify(portfolio)
+    try:
+        portfolio = db.get_portfolio_summary()
+        return jsonify(portfolio)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/scores")
 def api_scores():
-    scores = db.get_latest_scores()
-    return jsonify(scores)
+    try:
+        scores = db.get_latest_scores()
+        return jsonify(scores)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/trades")
 def api_trades():
-    symbol = request.args.get("symbol")
-    action = request.args.get("action")
-    trades = db.get_trades(symbol=symbol, action=action)
-    return jsonify(trades)
+    try:
+        symbol = request.args.get("symbol")
+        action = request.args.get("action")
+        trades = db.get_trades(symbol=symbol, action=action)
+        return jsonify(trades)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/ticker/<symbol>")
@@ -89,7 +98,7 @@ def api_ticker(symbol):
         "Accept": "application/json",
     })
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with urllib.request.urlopen(req, timeout=8) as resp:
             data = json.loads(resp.read())
         result = data["chart"]["result"][0]
         meta = result["meta"]
@@ -126,126 +135,166 @@ def api_ticker(symbol):
 
 @app.route("/api/analytics")
 def api_analytics():
-    data = db.get_analytics()
-    return jsonify(data)
+    try:
+        data = db.get_analytics()
+        return jsonify(data)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 # ─── API: Actions ───────────────────────────────────────────
 
 @app.route("/api/buy", methods=["POST"])
 def api_buy():
-    data = request.json
-    symbol = data.get("symbol", "").upper()
-    shares = int(data.get("shares", 0))
-    price = float(data.get("price", 0))
+    try:
+        data = request.json
+        symbol = data.get("symbol", "").upper()
+        shares = int(data.get("shares", 0))
+        price = float(data.get("price", 0))
+        thesis = data.get("thesis", {})
 
-    if not symbol or shares <= 0 or price <= 0:
-        return jsonify({"error": "Invalid parameters"}), 400
+        if not symbol or shares <= 0 or price <= 0:
+            return jsonify({"error": "Invalid parameters"}), 400
 
-    settings = db.get_settings()
-    cash = float(settings.get("cash", 0))
-    cost = shares * price
+        settings = db.get_settings()
+        cash = float(settings.get("cash", 0))
+        cost = shares * price
 
-    if cost > cash:
-        return jsonify({"error": "Insufficient cash"}), 400
+        if cost > cash:
+            return jsonify({"error": "Insufficient cash"}), 400
 
-    pos = {
-        "id": f"{symbol}-{datetime.now().strftime('%Y%m%d%H%M')}",
-        "symbol": symbol,
-        "name": data.get("name", symbol),
-        "entry_price": price,
-        "current_price": price,
-        "shares": shares,
-        "cost": round(cost, 2),
-        "pnl": 0.0,
-        "pnl_pct": 0.0,
-        "score_at_entry": data.get("score", 0),
-    }
+        pos_id = f"{symbol}-{datetime.now().strftime('%Y%m%d%H%M')}"
+        pos = {
+            "id": pos_id,
+            "symbol": symbol,
+            "name": data.get("name", symbol),
+            "entry_price": price,
+            "current_price": price,
+            "shares": shares,
+            "cost": round(cost, 2),
+            "pnl": 0.0,
+            "pnl_pct": 0.0,
+            "score_at_entry": data.get("score", 0),
+            "thesis": thesis,
+        }
 
-    db.insert_position(pos)
-    db.execute("UPDATE portfolio_settings SET cash = cash - %s, updated_at = NOW() WHERE id = 1", (cost,))
-    db.log_trade("BUY", symbol, shares, price, round(cost, 2), reason="manual", score=data.get("score"), position_id=pos["id"])
+        db.insert_position(pos)
+        db.execute("UPDATE portfolio_settings SET cash = cash - %s, updated_at = NOW() WHERE id = 1", (cost,))
+        trade_reason = thesis.get("why", "manual") if thesis else "manual"
+        db.log_trade("BUY", symbol, shares, price, round(cost, 2),
+                     reason=trade_reason, score=data.get("score"),
+                     position_id=pos_id)
+        # Store thesis in trade_log as JSON (column may not exist yet)
+        if thesis:
+            try:
+                db.execute("UPDATE trade_log SET thesis = %s WHERE id = (SELECT id FROM trade_log WHERE position_id = %s ORDER BY trade_date DESC LIMIT 1)",
+                           (json.dumps(thesis), pos_id))
+            except Exception:
+                pass  # thesis column may not exist yet
 
-    return jsonify({"ok": True, "position": pos})
+        return jsonify({"ok": True, "position": pos})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/close", methods=["POST"])
 def api_close():
-    data = request.json
-    pos_id = data.get("position_id", "")
-    price = float(data.get("price", 0))
+    try:
+        data = request.json
+        pos_id = data.get("position_id", "")
+        price = float(data.get("price", 0))
 
-    pos = db.get_position(pos_id)
-    if not pos:
-        return jsonify({"error": "Position not found"}), 404
+        pos = db.get_position(pos_id)
+        if not pos:
+            return jsonify({"error": "Position not found"}), 404
 
-    result = db.close_position(pos_id, price, "manual")
-    if not result:
-        return jsonify({"error": "Close failed"}), 500
+        result = db.close_position(pos_id, price, "manual")
+        if not result:
+            return jsonify({"error": "Close failed"}), 500
 
-    proceeds = pos["shares"] * price
-    db.execute("UPDATE portfolio_settings SET cash = cash + %s, updated_at = NOW() WHERE id = 1", (proceeds,))
-    db.log_trade("SELL", pos["symbol"], pos["shares"], price, pos["cost"],
-                 pnl_pct=result["pnl_pct"], reason="manual", score=pos.get("score_at_entry"), position_id=pos_id)
+        proceeds = pos["shares"] * price
+        db.execute("UPDATE portfolio_settings SET cash = cash + %s, updated_at = NOW() WHERE id = 1", (proceeds,))
+        db.log_trade("SELL", pos["symbol"], pos["shares"], price, pos["cost"],
+                     pnl_pct=result["pnl_pct"], reason="manual", score=pos.get("score_at_entry"), position_id=pos_id)
 
-    return jsonify({"ok": True, "pnl": result["pnl"], "pnl_pct": result["pnl_pct"]})
+        return jsonify({"ok": True, "pnl": result["pnl"], "pnl_pct": result["pnl_pct"]})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 # ─── API: Watchlist CRUD ────────────────────────────────────
 
 @app.route("/api/watchlist", methods=["GET"])
 def api_watchlist_get():
-    wl = db.get_watchlist()
-    return jsonify(wl)
+    try:
+        wl = db.get_watchlist()
+        return jsonify(wl)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/watchlist/add", methods=["POST"])
 def api_watchlist_add():
-    data = request.json
-    symbol = data.get("symbol", "").upper()
-    name = data.get("name", symbol)
-    notes = data.get("notes", "")
+    try:
+        data = request.json
+        symbol = data.get("symbol", "").upper()
+        name = data.get("name", symbol)
+        notes = data.get("notes", "")
 
-    if not symbol:
-        return jsonify({"error": "Symbol required"}), 400
+        if not symbol:
+            return jsonify({"error": "Symbol required"}), 400
 
-    # Check if already active
-    existing = db.get_watchlist()
-    if any(t["symbol"] == symbol for t in existing.get("tickers", [])):
-        return jsonify({"error": "Already in watchlist"}), 400
+        # Check if already active
+        existing = db.get_watchlist()
+        if any(t["symbol"] == symbol for t in existing.get("tickers", [])):
+            return jsonify({"error": "Already in watchlist"}), 400
 
-    db.add_ticker(symbol, name, notes)
-    return jsonify({"ok": True})
+        db.add_ticker(symbol, name, notes)
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/watchlist/remove", methods=["POST"])
 def api_watchlist_remove():
-    data = request.json
-    symbol = data.get("symbol", "").upper()
-    db.remove_ticker(symbol)
-    return jsonify({"ok": True})
+    try:
+        data = request.json
+        symbol = data.get("symbol", "").upper()
+        db.remove_ticker(symbol)
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/settings/update", methods=["POST"])
 def api_settings_update():
-    data = request.json
-    db.update_settings(data)
-    return jsonify({"ok": True})
+    try:
+        data = request.json
+        db.update_settings(data)
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/reset", methods=["POST"])
 def api_reset():
-    db.reset_portfolio()
-    return jsonify({"ok": True})
+    try:
+        db.reset_portfolio()
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/rescore", methods=["POST"])
 def api_rescore():
-    from stock_discovery.scorer import run_scoring
-    scores = run_scoring()
-    if scores:
-        db.save_scores(scores)
-    return jsonify({"ok": True, "scores": scores})
+    try:
+        from stock_discovery.scorer import run_scoring
+        scores = run_scoring()
+        if scores:
+            db.save_scores(scores)
+        return jsonify({"ok": True, "scores": scores, "count": len(scores)})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 # ─── Run ────────────────────────────────────────────────────

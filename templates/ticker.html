@@ -20,17 +20,21 @@ async function loadTicker() {
         }
 
         const ohlcv = data.ohlcv || [];
+        if (ohlcv.length === 0) {
+            document.getElementById('tickerPage').innerHTML = `<div class="text-muted" style="padding:40px;text-align:center;">No price data available for ${SYMBOL}</div>`;
+            return;
+        }
+
         const change = data.prev_close ? ((data.price / data.prev_close - 1) * 100) : 0;
         const last = ohlcv[ohlcv.length - 1] || {};
-        const first = ohlcv[0] || {};
 
         // Compute stats
-        const highs = ohlcv.map(d => d.high);
-        const lows = ohlcv.map(d => d.low);
-        const vols = ohlcv.map(d => d.volume);
-        const high52 = Math.max(...highs);
-        const low52 = Math.min(...lows);
-        const avgVol = vols.length > 20 ? vols.slice(-21, -1).reduce((a, b) => a + b, 0) / 20 : (vols.reduce((a, b) => a + b, 0) / vols.length);
+        const highs = ohlcv.map(d => d.high).filter(Boolean);
+        const lows = ohlcv.map(d => d.low).filter(Boolean);
+        const vols = ohlcv.map(d => d.volume).filter(Boolean);
+        const high52 = highs.length ? Math.max(...highs) : data.price;
+        const low52 = lows.length ? Math.min(...lows) : data.price;
+        const avgVol = vols.length > 20 ? vols.slice(-21, -1).reduce((a, b) => a + b, 0) / 20 : (vols.reduce((a, b) => a + b, 0) / (vols.length || 1));
         const todayVol = vols[vols.length - 1] || 0;
         const relVol = avgVol ? todayVol / avgVol : 1;
 

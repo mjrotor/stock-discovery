@@ -70,17 +70,22 @@
                     <tr>
                         <th>Ticker</th>
                         <th>Score</th>
-                        <th>M</th>
-                        <th>V</th>
-                        <th>T</th>
+                        <th>Mom</th>
+                        <th>Vol</th>
+                        <th>Trd</th>
+                        <th>Vlt</th>
+                        <th>Opt</th>
                         <th>Price</th>
                         <th></th>
                     </tr>
                 </thead>
                 <tbody id="scoresTable">
-                    <tr><td colspan="7" class="text-muted">Loading...</td></tr>
+                    <tr><td colspan="9" class="text-muted">Loading...</td></tr>
                 </tbody>
             </table>
+        </div>
+        <div class="text-muted text-xs mt-1" style="padding: 0 8px;">
+            Mom= Momentum · Vol= Volume · Trd= Trend · Vlt= Volatility · Opt= Options proxy
         </div>
     </div>
 </div>
@@ -153,7 +158,7 @@ async function loadDashboard() {
                     <td class="${pnlClass(pos.pnl)}">${pos.pnl >= 0 ? '+' : ''}${fmtCurrency(pos.pnl)}</td>
                     <td class="${pnlClass(pos.pnl_pct)}">${fmtPct(pos.pnl_pct)}</td>
                     <td><span class="score-badge ${scoreClass(pos.score_at_entry || 0)}">${pos.score_at_entry || '—'}</span></td>
-                    <td class="text-muted">${fmtCurrency(pos.entry_price * (1 + (settings.stop_loss_pct || -0.1)))}</td>
+                    <td>${fmtCurrency(Number(pos.entry_price) * (1 - Math.abs(Number(settings.stop_loss_pct) || 0.1)))}</td>
                     <td><button class="btn btn-sm btn-danger" onclick="closePosition('${pos.id}', '${pos.symbol}')">Close</button></td>
                 </tr>
             `).join('');
@@ -171,10 +176,12 @@ async function loadDashboard() {
                 return `
                 <tr>
                     <td><strong><a href="/ticker/${s.symbol}" style="color:inherit;text-decoration:none;">${s.symbol}</a></strong></td>
-                    <td><span class="score-badge ${scoreClass(s.composite)}">${s.composite}</span></td>
+                    <td><span class="score-badge ${scoreClass(s.composite)}" style="cursor:pointer" onclick="showScoreDetail('${s.symbol}', ${s.composite}, ${JSON.stringify(f).replace(/"/g, '&quot;')})">${s.composite}</span></td>
                     <td class="text-muted">${fmt(f.momentum, 0)}</td>
                     <td class="text-muted">${fmt(f.volume, 0)}</td>
                     <td class="text-muted">${fmt(f.trend, 0)}</td>
+                    <td class="text-muted">${fmt(f.volatility, 0)}</td>
+                    <td class="text-muted">${fmt(f.options, 0)}</td>
                     <td>${fmtCurrency(s.price)}</td>
                     <td>
                         ${locked ? '<span class="lock-icon">🔒</span>' : `<button class="btn btn-sm btn-primary" onclick="buyPrompt('${s.symbol}', ${s.price}, ${s.composite})">Buy</button>`}
@@ -194,7 +201,7 @@ async function loadDashboard() {
 async function loadPortfolioChart() {
     try {
         const trades = await API.trades();
-        const closed = trades.filter(t => t.Action === 'SELL' || t.Action === 'STOP_LOSS');
+        const closed = trades.filter(t => (t.Action || '').toUpperCase() === 'SELL' || (t.Action || '').toUpperCase() === 'STOP_LOSS');
         // Build cumulative P&L
         let running = 0;
         const labels = [];
@@ -272,7 +279,7 @@ async function loadPortfolioChart() {
 }
 
 function buyPrompt(symbol, price, score) {
-    const maxShares = Math.floor(450 / price); // 30% of 1500
+    const maxShares = Math.floor(450 / price);
     openModal(`
         <div class="modal-header">
             <h3>Buy ${symbol}</h3>
@@ -290,6 +297,41 @@ function buyPrompt(symbol, price, score) {
             <label>Est. Cost</label>
             <div class="form-control" id="estCost" style="background:var(--bg-hover)">${fmtCurrency(price)}</div>
         </div>
+        <hr style="border-color:var(--border);margin:16px 0;">
+        <div class="text-sm" style="margin-bottom:12px;color:var(--text-muted);">Trade Thesis (optional — helps track your reasoning)</div>
+        <div class="form-group">
+            <label>Why this ticker?</label>
+            <input type="text" class="form-control" id="thesisWhy" placeholder="e.g. AI momentum, earnings play">
+        </div>
+        <div class="grid-2">
+            <div class="form-group">
+                <label>Target Price ($)</label>
+                <input type="number" class="form-control" id="thesisTarget" step="0.01" placeholder="e.g. 150">
+            </div>
+            <div class="form-group">
+                <label>Stop/Invalidation ($)</label>
+                <input type="number" class="form-control" id="thesisStop" step="0.01" placeholder="e.g. 120">
+            </div>
+        </div>
+        <div class="grid-2">
+            <div class="form-group">
+                <label>Time Horizon</label>
+                <select class="form-control" id="thesisHorizon">
+                    <option value="swing">Swing (1-4 weeks)</option>
+                    <option value="position">Position (1-6 months)</option>
+                    <option value="day">Day trade</option>
+                    <option value="long">Long term (6m+)</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Confidence (1-10)</label>
+                <input type="number" class="form-control" id="thesisConfidence" min="1" max="10" value="5">
+            </div>
+        </div>
+        <div class="form-group">
+            <label>What changes the call?</label>
+            <input type="text" class="form-control" id="thesisInvalidation" placeholder="e.g. Breaks below 200d SMA, bad earnings">
+        </div>
         <div class="flex gap-2 mt-2">
             <button class="btn btn-primary" onclick="executeBuy('${symbol}', ${price}, ${score})">Confirm Buy</button>
             <button class="btn" onclick="closeModal()">Cancel</button>
@@ -303,8 +345,16 @@ function buyPrompt(symbol, price, score) {
 async function executeBuy(symbol, price, score) {
     const shares = parseInt(document.getElementById('buyShares').value);
     if (!shares || shares <= 0) return;
+    const thesis = {
+        why: document.getElementById('thesisWhy')?.value || '',
+        target: document.getElementById('thesisTarget')?.value || '',
+        stop: document.getElementById('thesisStop')?.value || '',
+        horizon: document.getElementById('thesisHorizon')?.value || 'swing',
+        confidence: document.getElementById('thesisConfidence')?.value || '5',
+        invalidation: document.getElementById('thesisInvalidation')?.value || '',
+    };
     try {
-        const result = await API.buy({ symbol, shares, price, score, name: symbol });
+        const result = await API.buy({ symbol, shares, price, score, name: symbol, thesis });
         if (result.error) {
             showToast(result.error, 'error');
         } else {
@@ -334,6 +384,41 @@ async function closePosition(posId, symbol) {
     } catch (e) {
         showToast('Close failed', 'error');
     }
+}
+
+function showScoreDetail(symbol, composite, factorsJson) {
+    let f = {};
+    try { f = typeof factorsJson === 'string' ? JSON.parse(factorsJson) : (factorsJson || {}); } catch(e) {}
+    const factorRows = [
+        { key: 'momentum', label: 'Momentum', desc: 'Rate of change + price vs SMA10' },
+        { key: 'volume', label: 'Volume', desc: 'Relative volume vs 20-day average' },
+        { key: 'trend', label: 'Trend', desc: 'Higher highs/lows pattern' },
+        { key: 'volatility', label: 'Volatility', desc: 'ATR-based (1.5-3.5% ideal range)' },
+        { key: 'options', label: 'Options Proxy', desc: 'Volume spike + price move as options activity proxy' },
+    ].map(({key, label, desc}) => {
+        const val = Number(f[key] || 0).toFixed(1);
+        const pct = (val / 10 * 100).toFixed(0);
+        const barColor = val >= 7 ? 'var(--green)' : val >= 4 ? 'var(--yellow)' : 'var(--red)';
+        return `<div style="margin-bottom:8px">
+            <div class="flex-between text-sm"><span>${label}</span><span>${val}/10</span></div>
+            <div style="height:4px;background:var(--bg-hover);border-radius:2px;margin-top:2px;">
+                <div style="width:${pct}%;height:100%;background:${barColor};border-radius:2px;"></div>
+            </div>
+            <div class="text-xs text-muted" style="margin-top:2px;">${desc}</div>
+        </div>`;
+    }).join('');
+
+    openModal(`
+        <div class="modal-header">
+            <h3>${symbol} — Score Breakdown</h3>
+            <button class="modal-close" onclick="closeModal()">✕</button>
+        </div>
+        <div style="text-align:center;margin-bottom:16px;">
+            <span class="score-badge ${scoreClass(composite)}" style="font-size:24px;padding:8px 20px;">${composite}</span>
+            <div class="text-muted text-sm" style="margin-top:4px;">Composite Score (0-100)</div>
+        </div>
+        ${factorRows}
+    `);
 }
 
 async function rescore() {
