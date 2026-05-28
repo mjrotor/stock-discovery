@@ -79,29 +79,9 @@
             <p><strong>Purge:</strong> Deletes everything including watchlist tickers</p>
         </div>
     </div>
-</div>
-
-<!-- Data Files -->
-<div class="card">
-    <div class="card-header"><span class="card-title">Data Files</span></div>
-    <div class="grid-3 text-sm">
-        <div>
-            <span class="text-muted">Watchlist:</span><br>
-            <code class="text-xs">~/.hermes/watchlist/watchlist.json</code>
-        </div>
-        <div>
-            <span class="text-muted">Portfolio:</span><br>
-            <code class="text-xs">~/.hermes/watchlist/portfolio.json</code>
-        </div>
-        <div>
-            <span class="text-muted">Trade History:</span><br>
-            <code class="text-xs">~/.hermes/watchlist/trade_history.csv</code>
-        </div>
-    </div>
-</div>
 {% endblock %}
 
-{% block scripts -->
+{% block scripts %}
 <script>
 async function loadSettings() {
     try {

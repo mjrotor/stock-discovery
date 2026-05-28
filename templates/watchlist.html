@@ -32,36 +32,9 @@
 
     <!-- Settings -->
     <div>
-        <div class="card">
-            <div class="card-header"><span class="card-title">Trading Settings</span></div>
-            <div class="form-group">
-                <label>Starting Balance ($)</label>
-                <input type="number" class="form-control" id="setBalance" step="100">
-            </div>
-            <div class="form-group">
-                <label>Max Positions</label>
-                <input type="number" class="form-control" id="setMaxPos" min="1" max="10">
-            </div>
-            <div class="form-group">
-                <label>Max Per Position (%)</label>
-                <input type="number" class="form-control" id="setMaxPct" min="5" max="100" step="5">
-            </div>
-            <div class="form-group">
-                <label>Min Cash Reserve (%)</label>
-                <input type="number" class="form-control" id="setReserve" min="5" max="50" step="5">
-            </div>
-            <div class="form-group">
-                <label>Stop Loss (%)</label>
-                <input type="number" class="form-control" id="setStopLoss" min="1" max="50" step="1">
-            </div>
-            <div class="form-group">
-                <label>Paper Trading</label>
-                <select class="form-control" id="setPaper">
-                    <option value="true">Enabled (Fake Money)</option>
-                    <option value="false">Disabled (Live Trading)</option>
-                </select>
-            </div>
-            <button class="btn btn-primary" onclick="saveSettings()">Save Settings</button>
+        <div class="card" style="margin-bottom: 16px;">
+            <div class="card-header"><span class="card-title">⚙️ Trading Settings</span></div>
+            <p class="text-muted text-sm">Trading rules (balance, positions, stop-loss, etc.) are now managed on the <a href="/settings" style="color:var(--blue);">Settings page</a>.</p>
         </div>
 
         <!-- Scoring Weights -->
@@ -132,12 +105,7 @@ async function loadWatchlist() {
         }
 
         // Populate settings
-        document.getElementById('setBalance').value = settings.starting_balance || 1500;
-        document.getElementById('setMaxPos').value = settings.max_positions || 3;
-        document.getElementById('setMaxPct').value = (settings.max_per_position_pct || 0.3) * 100;
-        document.getElementById('setReserve').value = (settings.min_cash_reserve_pct || 0.2) * 100;
-        document.getElementById('setStopLoss').value = Math.abs(settings.stop_loss_pct || 0.1) * 100;
-        document.getElementById('setPaper').value = settings.paper_trading !== false ? 'true' : 'false';
+        // (trading settings moved to Settings page — settings here are display-only)
     } catch (e) {
         console.error('Watchlist load error:', e);
         showToast('Error loading watchlist', 'error');
@@ -197,23 +165,6 @@ async function removeTicker(symbol) {
         loadWatchlist();
     } catch (e) {
         showToast('Remove failed', 'error');
-    }
-}
-
-async function saveSettings() {
-    const data = {
-        starting_balance: parseFloat(document.getElementById('setBalance').value) || 1500,
-        max_positions: parseInt(document.getElementById('setMaxPos').value) || 3,
-        max_per_position_pct: (parseInt(document.getElementById('setMaxPct').value) || 30) / 100,
-        min_cash_reserve_pct: (parseInt(document.getElementById('setReserve').value) || 20) / 100,
-        stop_loss_pct: -(parseInt(document.getElementById('setStopLoss').value) || 10) / 100,
-        paper_trading: document.getElementById('setPaper').value === 'true',
-    };
-    try {
-        await API.updateSettings(data);
-        showToast('Settings saved', 'success');
-    } catch (e) {
-        showToast('Save failed', 'error');
     }
 }
 
