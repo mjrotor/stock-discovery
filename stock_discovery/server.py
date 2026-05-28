@@ -666,8 +666,8 @@ def api_deposit():
             (amount, amount)
         )
 
-        # Log deposit in trade_log
-        db.log_trade("DEPOSIT", "CASH", 0, 0, 0, reason=note or "deposit", pnl_pct=None, score=None)
+        # Log deposit in trade_log (use Cost column to store deposit amount)
+        db.log_trade("DEPOSIT", "CASH", 0, 0, amount, reason=note or "deposit", pnl_pct=None, score=None)
 
         # Return updated summary
         summary = db.get_portfolio_summary()
