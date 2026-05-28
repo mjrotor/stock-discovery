@@ -82,16 +82,18 @@ def migrate():
         )
     print(f"  ✓ {len(tickers)} tickers migrated")
 
-    # 3. Positions
+    # 3. Positions — insert first so we can link trades
     positions = pf.get("open_positions", []) + pf.get("closed_positions", [])
     print(f"\nMigrating {len(positions)} positions...")
+    pos_id_map = {}  # symbol → position id
     for pos in positions:
+        pid = pos["id"]
         db.execute(
             """INSERT INTO positions (id, symbol, name, entry_price, current_price, exit_price, shares, cost, pnl, pnl_pct, score_at_entry, status, entry_date, exit_date, exit_reason)
                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                ON CONFLICT (id) DO NOTHING""",
             (
-                pos["id"], pos["symbol"], pos.get("name", pos["symbol"]),
+                pid, pos["symbol"], pos.get("name", pos["symbol"]),
                 pos["entry_price"], pos.get("current_price"), pos.get("exit_price"),
                 pos["shares"], pos["cost"], pos.get("pnl", 0), pos.get("pnl_pct", 0),
                 pos.get("score_at_entry"),
@@ -99,27 +101,32 @@ def migrate():
                 pos.get("entry_date"), pos.get("exit_date"), pos.get("exit_reason"),
             ),
         )
+        pos_id_map[pos["symbol"]] = pid
     print(f"  ✓ {len(positions)} positions migrated")
 
-    # 4. Trade history
+    # 4. Trade history — link to positions via symbol
     trades = load_csv(HISTORY_FILE)
     print(f"\nMigrating {len(trades)} trade log entries...")
     for t in trades:
+        action = (t.get("Action", "") or "").upper()
+        sym = t.get("Symbol", "")
+        # Derive position_id from the position we just inserted
+        linked_pid = pos_id_map.get(sym) if action == "BUY" else None
         db.execute(
             """INSERT INTO trade_log (trade_date, action, symbol, shares, price, cost, pnl_pct, reason, score, position_id)
                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
             (
-                t.get("Date", ""), t.get("Action", ""), t.get("Symbol", ""),
+                t.get("Date", ""), t.get("Action", ""), sym,
                 int(t.get("Shares", 0) or 0),
                 float(t.get("Price", 0) or 0),
                 float(t.get("Cost", 0) or 0),
                 float(t["PnL%"]) if t.get("PnL%") else None,
                 t.get("Reason", "manual"),
                 float(t["Score"]) if t.get("Score") else None,
-                None,
+                linked_pid,
             ),
         )
-    print(f"  ✓ {len(trades)} trades migrated")
+    print(f"  ✓ {len(trades)} trades migrated (linked to positions)")
 
     # 5. Verify
     wl = db.get_watchlist()
