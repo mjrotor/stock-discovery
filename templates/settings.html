@@ -78,8 +78,38 @@
             <p><strong>Export CSV:</strong> Downloads trade_history.csv</p>
             <p><strong>Reset:</strong> Clears positions, resets to starting balance</p>
             <p><strong>Purge:</strong> Deletes everything including watchlist tickers</p>
+    </div>
+
+    <!-- Scoring Weights -->
+    <div class="card">
+        <div class="card-header"><span class="card-title">Scoring Weights</span></div>
+        <p class="text-muted text-sm mb-2">Adjust how ticker scores are calculated. Total should be 100%.</p>
+        <div class="slider-group">
+            <label>Momentum <span id="wMomVal">25%</span></label>
+            <input type="range" id="wMomentum" min="0" max="50" value="25" oninput="updateWeight('Momentum')">
+        </div>
+        <div class="slider-group">
+            <label>Trend <span id="wTrendVal">25%</span></label>
+            <input type="range" id="wTrend" min="0" max="50" value="25" oninput="updateWeight('Trend')">
+        </div>
+        <div class="slider-group">
+            <label>Volume <span id="wVolVal">20%</span></label>
+            <input type="range" id="wVolume" min="0" max="50" value="20" oninput="updateWeight('Volume')">
+        </div>
+        <div class="slider-group">
+            <label>Volatility <span id="wVolaVal">15%</span></label>
+            <input type="range" id="wVolatility" min="0" max="50" value="15" oninput="updateWeight('Volatility')">
+        </div>
+        <div class="slider-group">
+            <label>Options <span id="wOptVal">15%</span></label>
+            <input type="range" id="wOptions" min="0" max="50" value="15" oninput="updateWeight('Options')">
+        </div>
+        <div class="flex-between mt-1">
+            <span class="text-sm" id="weightTotal">Total: 100%</span>
+            <button class="btn btn-sm" onclick="saveWeights()">Save Weights</button>
         </div>
     </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
@@ -94,6 +124,28 @@ async function loadSettings() {
         document.getElementById('cfgMaxPct').value = ((s.max_per_position_pct ?? 0.3) * 100);
         document.getElementById('cfgReserve').value = ((s.min_cash_reserve_pct ?? 0.2) * 100);
         document.getElementById('cfgStopLoss').value = Math.abs(s.stop_loss_pct ?? 0.1) * 100;
+
+        // Populate scoring weights
+        const sw = s.score_weights || {};
+        if (typeof sw === 'string') { try { sw = JSON.parse(sw); } catch(e) {} }
+        const wMomentum = Math.round((sw.momentum ?? 0.25) * 100);
+        const wTrend = Math.round((sw.trend ?? 0.25) * 100);
+        const wVolume = Math.round((sw.volume ?? 0.2) * 100);
+        const wVolatility = Math.round((sw.volatility ?? 0.15) * 100);
+        const wOptions = Math.round((sw.options ?? 0.15) * 100);
+        document.getElementById('wMomentum').value = wMomentum;
+        document.getElementById('wMomVal').textContent = wMomentum + '%';
+        document.getElementById('wTrend').value = wTrend;
+        document.getElementById('wTrendVal').textContent = wTrend + '%';
+        document.getElementById('wVolume').value = wVolume;
+        document.getElementById('wVolVal').textContent = wVolume + '%';
+        document.getElementById('wVolatility').value = wVolatility;
+        document.getElementById('wVolaVal').textContent = wVolatility + '%';
+        document.getElementById('wOptions').value = wOptions;
+        document.getElementById('wOptVal').textContent = wOptions + '%';
+        const total = wMomentum + wTrend + wVolume + wVolatility + wOptions;
+        document.getElementById('weightTotal').textContent = `Total: ${total}%`;
+        document.getElementById('weightTotal').style.color = total === 100 ? 'var(--green)' : 'var(--red)';
     } catch (e) {
         console.error('Settings load error:', e);
         showToast('Error loading settings', 'error');
@@ -161,6 +213,35 @@ async function purgeAll() {
 }
 
 loadSettings();
+
+function updateWeight(name) {
+    const val = document.getElementById('w' + name).value;
+    document.getElementById('w' + name + 'Val').textContent = val + '%';
+    const total = ['Momentum','Trend','Volume','Volatility','Options']
+        .reduce((s, n) => s + parseInt(document.getElementById('w' + n).value), 0);
+    document.getElementById('weightTotal').textContent = `Total: ${total}%`;
+    document.getElementById('weightTotal').style.color = total === 100 ? 'var(--green)' : 'var(--red)';
+}
+
+async function saveWeights() {
+    const weights = {
+        momentum: parseInt(document.getElementById('wMomentum').value) / 100,
+        trend: parseInt(document.getElementById('wTrend').value) / 100,
+        volume: parseInt(document.getElementById('wVolume').value) / 100,
+        volatility: parseInt(document.getElementById('wVolatility').value) / 100,
+        options: parseInt(document.getElementById('wOptions').value) / 100,
+    };
+    try {
+        await fetch('/api/settings/weights', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(weights)
+        });
+        showToast('Weights saved', 'success');
+    } catch (e) {
+        showToast('Save failed', 'error');
+    }
+}
 
 async function doLogout() {
     await fetch('/api/auth/logout', {method: 'POST'});

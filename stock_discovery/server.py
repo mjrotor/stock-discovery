@@ -370,6 +370,20 @@ def api_settings_update():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/settings/weights", methods=["POST"])
+def api_settings_weights():
+    try:
+        data = request.json
+        # Store weights in portfolio_settings.score_weights JSONB
+        db.execute(
+            "UPDATE portfolio_settings SET score_weights = %s, updated_at = NOW() WHERE id = 1",
+            (json.dumps(data),)
+        )
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/reset", methods=["POST"])
 def api_reset():
     try:
