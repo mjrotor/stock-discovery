@@ -119,8 +119,10 @@ function refreshPage() {
 }
 
 function loadDashboard() {
-    API.portfolio().then(portfolio => {
-        API.scores().then(scores => {
+    const portfolioPromise = API.portfolio().catch(e => { console.error('portfolio error:', e); showToast('Error loading dashboard', 'error'); return null; });
+    const scoresPromise = API.scores().catch(e => { console.error('scores error:', e); showToast('Error loading scores', 'error'); return []; });
+
+    portfolioPromise.then(portfolio => {
         const p = portfolio?.portfolio || {};
         const settings_d = portfolio?.settings || {};
         const totalVal = p.total_value || 0;
@@ -145,7 +147,6 @@ function loadDashboard() {
         if (openPositions.length === 0) {
             posBody.innerHTML = '<tr><td colspan="10" class="text-muted">No open positions</td></tr>';
         } else {
-            const openSymbols = new Set(openPositions.map(pos => pos.symbol));
             posBody.innerHTML = openPositions.map(pos => `
                 <tr class="${pos.pnl_pct >= 0 ? 'profit' : 'loss'}">
                     <td><strong><a href="/ticker/${pos.symbol}" style="color:inherit;text-decoration:none;">${pos.symbol}</a></strong></td>
@@ -162,36 +163,41 @@ function loadDashboard() {
             `).join('');
         }
 
-        // Scores table
+        // Charts
+        loadPortfolioChart();
+    });
+
+    scoresPromise.then(scores => {
         const scoreBody = document.getElementById('scoresTable');
         const topScores = (scores || []).filter(s => s.composite > 0).slice(0, 8);
         if (topScores.length === 0) {
-            scoreBody.innerHTML = '<tr><td colspan="7" class="text-muted">No scores yet</td></tr>';
-        } else {
-            scoreBody.innerHTML = topScores.map(s => {
-                const f = s.factors || {};
-                const locked = openSymbols.has(s.symbol);
-                return `
-                <tr>
-                    <td><strong><a href="/ticker/${s.symbol}" style="color:inherit;text-decoration:none;">${s.symbol}</a></strong></td>
-                    <td><span class="score-badge ${scoreClass(s.composite)}" style="cursor:pointer" onclick="showScoreDetail('${s.symbol}', ${s.composite}, ${JSON.stringify(f).replace(/"/g, '&quot;')})">${s.composite}</span></td>
-                    <td class="text-muted">${fmt(f.momentum, 0)}</td>
-                    <td class="text-muted">${fmt(f.volume, 0)}</td>
-                    <td class="text-muted">${fmt(f.trend, 0)}</td>
-                    <td class="text-muted">${fmt(f.volatility, 0)}</td>
-                    <td class="text-muted">${fmt(f.options, 0)}</td>
-                    <td>${fmtCurrency(s.price)}</td>
-                    <td>
-                        ${locked ? '<span class="lock-icon">🔒</span>' : `<button class="btn btn-sm btn-primary" onclick="buyPrompt('${s.symbol}', ${s.price}, ${s.composite})">Buy</button>`}
-                    </td>
-                </tr>
-            `}).join('');
+            scoreBody.innerHTML = '<tr><td colspan="9" class="text-muted">No scores yet — click 🔄 Refresh</td></tr>';
+            return;
         }
-
-        // Charts
-        loadPortfolioChart();
-        }).catch(e => { console.error('scores error:', e); showToast('Error loading scores', 'error'); });
-    }).catch(e => { console.error('portfolio error:', e); showToast('Error loading dashboard', 'error'); });
+        // Build open symbols set from DOM positions
+        const openSymbols = new Set();
+        document.querySelectorAll('#positionsTable tr td:first-child a').forEach(a => {
+            openSymbols.add(a.textContent.trim());
+        });
+        scoreBody.innerHTML = topScores.map(s => {
+            const f = s.factors || {};
+            const locked = openSymbols.has(s.symbol);
+            return `
+            <tr>
+                <td><strong><a href="/ticker/${s.symbol}" style="color:inherit;text-decoration:none;">${s.symbol}</a></strong></td>
+                <td><span class="score-badge ${scoreClass(s.composite)}" style="cursor:pointer" onclick="showScoreDetail('${s.symbol}', ${s.composite}, ${JSON.stringify(f).replace(/"/g, '&quot;')})">${s.composite}</span></td>
+                <td class="text-muted">${fmt(f.momentum, 0)}</td>
+                <td class="text-muted">${fmt(f.volume, 0)}</td>
+                <td class="text-muted">${fmt(f.trend, 0)}</td>
+                <td class="text-muted">${fmt(f.volatility, 0)}</td>
+                <td class="text-muted">${fmt(f.options, 0)}</td>
+                <td>${fmtCurrency(s.price)}</td>
+                <td>
+                    ${locked ? '<span class="lock-icon">🔒</span>' : `<button class="btn btn-sm btn-primary" onclick="buyPrompt('${s.symbol}', ${s.price}, ${s.composite})">Buy</button>`}
+                </td>
+            </tr>
+        `}).join('');
+    });
 }
 
 function loadPortfolioChart() {

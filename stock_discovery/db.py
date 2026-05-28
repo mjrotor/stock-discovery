@@ -305,6 +305,7 @@ def get_latest_scores():
             "volume": float(d["volume"]) if d.get("volume") is not None else 0,
             "trend": float(d["trend"]) if d.get("trend") is not None else 0,
             "volatility": float(d["volatility"]) if d.get("volatility") is not None else 0,
+            "options": float(d["options"]) if d.get("options") is not None else 0,
         }
         d["price"] = float(d["price"]) if d.get("price") is not None else 0
         result.append(d)
