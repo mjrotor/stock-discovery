@@ -48,11 +48,12 @@
                         <th>P&L%</th>
                         <th>Score</th>
                         <th>Stop</th>
+                        <th>Value</th>
                         <th></th>
                     </tr>
                 </thead>
                 <tbody id="positionsTable">
-                    <tr><td colspan="9" class="text-muted">Loading...</td></tr>
+                    <tr><td colspan="10" class="text-muted">Loading...</td></tr>
                 </tbody>
             </table>
         </div>
@@ -142,7 +143,7 @@ function loadDashboard() {
         // Positions table
         const posBody = document.getElementById('positionsTable');
         if (openPositions.length === 0) {
-            posBody.innerHTML = '<tr><td colspan="9" class="text-muted">No open positions</td></tr>';
+            posBody.innerHTML = '<tr><td colspan="10" class="text-muted">No open positions</td></tr>';
         } else {
             const openSymbols = new Set(openPositions.map(pos => pos.symbol));
             posBody.innerHTML = openPositions.map(pos => `
@@ -155,6 +156,7 @@ function loadDashboard() {
                     <td class="${pnlClass(pos.pnl_pct)}">${fmtPct(pos.pnl_pct)}</td>
                     <td><span class="score-badge ${scoreClass(pos.score_at_entry || 0)}">${pos.score_at_entry || '—'}</span></td>
                     <td>${fmtCurrency(Number(pos.entry_price) * (1 - Math.abs(Number(settings_d.stop_loss_pct) || 0.1)))}</td>
+                    <td><strong>${fmtCurrency(Number(pos.shares || 0) * Number(pos.current_price || 0))}</strong></td>
                     <td><button class="btn btn-sm btn-danger" onclick="closePosition('${pos.id}', '${pos.symbol}')">Close</button></td>
                 </tr>
             `).join('');

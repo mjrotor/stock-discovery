@@ -30,6 +30,26 @@
         </div>
     </div>
 
+    <!-- Quick Stats -->
+    <div>
+        <div class="card">
+            <div class="card-header"><span class="card-title">📊 Watchlist Stats</span></div>
+            <div class="text-sm">
+                <div class="flex-between" style="padding:8px 0;border-bottom:1px solid var(--border);">
+                    <span class="text-muted">Total Tickers</span>
+                    <strong id="statTickers">—</strong>
+                </div>
+                <div class="flex-between" style="padding:8px 0;border-bottom:1px solid var(--border);">
+                    <span class="text-muted">Last Updated</span>
+                    <strong id="statUpdated">—</strong>
+                </div>
+                <div class="flex-between" style="padding:8px 0;">
+                    <span class="text-muted">Scoring Weights</span>
+                    <a href="/settings" style="color:var(--blue);font-size:13px;">Manage in Settings →</a>
+                </div>
+            </div>
+        </div>
+    </div>
 </div>
 {% endblock %}
 
@@ -37,14 +57,13 @@
 <script>
 let watchlistData = null;
 
-async function loadWatchlist() {
-    try {
-        watchlistData = await API.watchlist();
-        const tickers = watchlistData?.tickers || [];
-        const settings = watchlistData?.settings || {};
-
-        document.getElementById('tickerCount').textContent = `${tickers.length} tickers`;
-
+function loadWatchlist() {
+    API.watchlist().then(wl => {
+        watchlistData = wl;
+        const tickers = wl?.tickers || [];
+        document.getElementById('tickerCount').textContent = tickers.length + ' tickers';
+        document.getElementById('statTickers').textContent = tickers.length;
+        document.getElementById('statUpdated').textContent = wl?.settings?.updated_at ? wl.settings.updated_at.slice(0,10) : '—';
         const tbody = document.getElementById('watchlistTable');
         if (tickers.length === 0) {
             tbody.innerHTML = '<tr><td colspan="4" class="text-muted">No tickers in watchlist</td></tr>';
@@ -58,13 +77,10 @@ async function loadWatchlist() {
                 </tr>
             `).join('');
         }
-
-        // Populate settings
-        // (trading settings moved to Settings page — settings here are display-only)
-    } catch (e) {
+    }).catch(e => {
         console.error('Watchlist load error:', e);
         showToast('Error loading watchlist', 'error');
-    }
+    });
 }
 
 function openAddModal() {
@@ -92,41 +108,28 @@ function openAddModal() {
     `);
 }
 
-async function addTicker() {
+function addTicker() {
     const symbol = document.getElementById('addSymbol').value.trim().toUpperCase();
     const name = document.getElementById('addName').value.trim();
     const notes = document.getElementById('addNotes').value.trim();
     if (!symbol) return;
-
-    try {
-        const result = await API.addWatchlist({ symbol, name: name || symbol, notes });
+    API.addWatchlist({ symbol, name: name || symbol, notes }).then(result => {
         if (result.error) {
             showToast(result.error, 'error');
         } else {
             closeModal();
-            showToast(`Added ${symbol}`, 'success');
+            showToast('Added ' + symbol, 'success');
             loadWatchlist();
         }
-    } catch (e) {
-        showToast('Add failed', 'error');
-    }
+    }).catch(e => showToast('Add failed', 'error'));
 }
 
-async function removeTicker(symbol) {
-    if (!confirm(`Remove ${symbol} from watchlist?`)) return;
-    try {
-        await API.removeWatchlist({ symbol });
-        showToast(`Removed ${symbol}`, 'info');
+function removeTicker(symbol) {
+    if (!confirm('Remove ' + symbol + ' from watchlist?')) return;
+    API.removeWatchlist({ symbol }).then(() => {
+        showToast('Removed ' + symbol, 'info');
         loadWatchlist();
-    } catch (e) {
-        showToast('Remove failed', 'error');
-    }
-}
-
-async function saveWeights() {
-    // Weights are saved to the scorer.py file — for now just show a toast
-    // In a full implementation, we'd POST to /api/settings/weights
-    showToast('Weights saved (restart server to apply)', 'info');
+    }).catch(e => showToast('Remove failed', 'error'));
 }
 
 loadWatchlist();
