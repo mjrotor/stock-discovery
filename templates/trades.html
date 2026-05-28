@@ -148,7 +148,7 @@ function renderTrades(trades) {
                 <td>${t.Date || '—'}</td>
                 <td><span class="score-badge ${isBuy ? 'score-high' : 'score-low'}">${t.Action}</span></td>
                 <td><strong><a href="/ticker/${t.Symbol}" style="color:inherit;text-decoration:none;">${t.Symbol}</a></strong></td>
-                <td>{t.Shares || '—'}</td>
+                <td>${t.Shares || '—'}</td>
                 <td>${fmtCurrency(parseFloat(t.Price || 0))}</td>
                 <td>${fmtCurrency(parseFloat(t.Cost || 0))}</td>
                 <td class="${pnlClass(pnl)}">${t['PnL%'] ? fmtPct(pnl) : '—'}</td>
