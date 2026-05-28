@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div style="max-width: 400px; margin: 80px auto;">
+    <div class="card">
+        <div class="card-header"><span class="card-title">🔐 Enter Password</span></div>
+        <p class="text-muted text-sm mb-2">Settings page is protected. Enter the dashboard password to continue.</p>
+        <div class="form-group">
+            <label>Password</label>
+            <input type="password" class="form-control" id="loginPassword" placeholder="Enter password" autofocus>
+        </div>
+        <button class="btn btn-primary" onclick="doLogin()">Unlock</button>
+        <div id="loginError" class="text-sm" style="color:var(--red);margin-top:8px;display:none;">Invalid password</div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.getElementById('loginPassword').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') doLogin();
+});
+
+async function doLogin() {
+    const password = document.getElementById('loginPassword').value;
+    if (!password) return;
+    try {
+        const res = await fetch('/api/auth/login', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({password})
+        });
+        if (res.ok) {
+            window.location.href = '/settings';
+        } else {
+            document.getElementById('loginError').style.display = 'block';
+            document.getElementById('loginPassword').value = '';
+            document.getElementById('loginPassword').focus();
+        }
+    } catch (e) {
+        document.getElementById('loginError').style.display = 'block';
+    }
+}
+</script>
+{% endblock %}

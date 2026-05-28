@@ -3,6 +3,7 @@
 {% block content %}
 <div class="page-header">
     <h1>Settings</h1>
+    <button class="btn btn-sm" onclick="doLogout()">🔒 Logout</button>
 </div>
 
 <div class="grid-2">
@@ -160,5 +161,10 @@ async function purgeAll() {
 }
 
 loadSettings();
+
+async function doLogout() {
+    await fetch('/api/auth/logout', {method: 'POST'});
+    window.location.href = '/';
+}
 </script>
 {% endblock %}

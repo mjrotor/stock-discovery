@@ -16,12 +16,13 @@ from flask import Flask, render_template, jsonify, request
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from stock_discovery import db
-
+from flask import Flask, render_template, jsonify, request, session, redirect, url_for
 app = Flask(
     __name__,
     template_folder=os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "templates"),
     static_folder=os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static"),
 )
+app.secret_key = os.environ.get("SESSION_SECRET", os.environ.get("DEPOSIT_PASSWORD", "dev-secret-key"))
 
 
 # ─── Market Holidays (NYSE) ─────────────────────────────────
@@ -77,6 +78,16 @@ def require_deposit_password(f):
     return decorated
 
 
+def require_auth(f):
+    """Decorator: require password-authenticated session for page routes."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if session.get("authenticated"):
+            return f(*args, **kwargs)
+        return redirect(url_for("login_page"))
+    return decorated
+
+
 # ─── Pages ──────────────────────────────────────────────────
 
 @app.route("/")
@@ -104,7 +115,31 @@ def analytics():
     return render_template("analytics.html")
 
 
+@app.route("/login")
+def login_page():
+    if session.get("authenticated"):
+        return redirect(url_for("settings"))
+    return render_template("login.html")
+
+@app.route("/api/auth/login", methods=["POST"])
+def api_login():
+    data = request.json if request.is_json else request.form
+    pwd = os.environ.get("DEPOSIT_PASSWORD", "")
+    if not pwd:
+        return jsonify({"error": "Server misconfigured: no DEPOSIT_PASSWORD"}), 500
+    if data.get("password", "") == pwd:
+        session["authenticated"] = True
+        session.permanent = True
+        return jsonify({"ok": True})
+    return jsonify({"error": "Invalid password"}), 401
+
+@app.route("/api/auth/logout", methods=["POST"])
+def api_logout():
+    session.pop("authenticated", None)
+    return jsonify({"ok": True})
+
 @app.route("/settings")
+@require_auth
 def settings():
     return render_template("settings.html")
 
