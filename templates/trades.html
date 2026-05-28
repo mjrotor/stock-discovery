@@ -142,16 +142,18 @@ function renderTrades(trades) {
 
     tbody.innerHTML = trades.map(t => {
         const pnl = parseFloat(t['PnL%'] || 0);
-        const isBuy = t.Action === 'BUY';
+        const action = (t.Action || '').toUpperCase();
+        const isBuy = action === 'BUY';
+        const isDeposit = action === 'DEPOSIT';
         return `
             <tr class="${isBuy ? '' : (pnl >= 0 ? 'profit' : 'loss')}">
                 <td>${t.Date || '—'}</td>
-                <td><span class="score-badge ${isBuy ? 'score-high' : 'score-low'}">${t.Action}</span></td>
+                <td><span class="score-badge ${isBuy ? 'score-high' : isDeposit ? 'score-mid' : 'score-low'}">${t.Action}</span></td>
                 <td><strong><a href="/ticker/${t.Symbol}" style="color:inherit;text-decoration:none;">${t.Symbol}</a></strong></td>
-                <td>${t.Shares || '—'}</td>
-                <td>${fmtCurrency(parseFloat(t.Price || 0))}</td>
-                <td>${fmtCurrency(parseFloat(t.Cost || 0))}</td>
-                <td class="${pnlClass(pnl)}">${t['PnL%'] ? fmtPct(pnl) : '—'}</td>
+                <td>${isDeposit ? '—' : (t.Shares || '—')}</td>
+                <td>${isDeposit ? '—' : fmtCurrency(parseFloat(t.Price || 0))}</td>
+                <td>${isDeposit ? fmtCurrency(parseFloat(t.Cost || 0)) : fmtCurrency(parseFloat(t.Cost || 0))}</td>
+                <td class="${pnlClass(pnl)}">${isDeposit ? '—' : (t['PnL%'] ? fmtPct(pnl) : '—')}</td>
                 <td class="text-muted">${t.Reason || '—'}</td>
             </tr>
         `;
@@ -159,18 +161,24 @@ function renderTrades(trades) {
 }
 
 function renderStats(trades) {
-    const closed = trades.filter(t => (t.Action || '').toUpperCase() !== 'BUY');
+    const closed = trades.filter(t => {
+        const a = (t.Action || '').toUpperCase();
+        return a !== 'BUY' && a !== 'DEPOSIT';
+    });
     const wins = closed.filter(t => parseFloat(t['PnL%'] || 0) > 0);
     const losses = closed.filter(t => parseFloat(t['PnL%'] || 0) <= 0);
 
-    document.getElementById('statTotal').textContent = closed.length;
+    document.getElementById('statTotal').textContent = trades.length;
     document.getElementById('statWinRate').textContent = closed.length ? fmtPct(wins.length / closed.length * 100) : '—';
     document.getElementById('statAvgWin').textContent = wins.length ? fmtPct(wins.reduce((s, t) => s + parseFloat(t['PnL%'] || 0), 0) / wins.length) : '—';
     document.getElementById('statAvgLoss').textContent = losses.length ? fmtPct(losses.reduce((s, t) => s + parseFloat(t['PnL%'] || 0), 0) / losses.length) : '—';
 }
 
 function renderCharts(trades) {
-    const closed = trades.filter(t => (t.Action || '').toUpperCase() !== 'BUY').sort((a, b) => a.Date.localeCompare(b.Date));
+    const closed = trades.filter(t => {
+        const a = (t.Action || '').toUpperCase();
+        return a !== 'BUY' && a !== 'DEPOSIT';
+    }).sort((a, b) => a.Date.localeCompare(b.Date));
 
     // Cumulative P&L
     let running = 0;

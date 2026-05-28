@@ -30,50 +30,12 @@
         </div>
     </div>
 
-    <!-- Scoring Weights -->
-        <div class="card">
-            <div class="card-header"><span class="card-title">Scoring Weights</span></div>
-            <div class="slider-group">
-                <label>Momentum <span id="wMomVal">25%</span></label>
-                <input type="range" id="wMomentum" min="0" max="50" value="25" oninput="updateWeight('Momentum')">
-            </div>
-            <div class="slider-group">
-                <label>Trend <span id="wTrendVal">25%</span></label>
-                <input type="range" id="wTrend" min="0" max="50" value="25" oninput="updateWeight('Trend')">
-            </div>
-            <div class="slider-group">
-                <label>Volume <span id="wVolVal">20%</span></label>
-                <input type="range" id="wVolume" min="0" max="50" value="20" oninput="updateWeight('Volume')">
-            </div>
-            <div class="slider-group">
-                <label>Volatility <span id="wVolaVal">15%</span></label>
-                <input type="range" id="wVolatility" min="0" max="50" value="15" oninput="updateWeight('Volatility')">
-            </div>
-            <div class="slider-group">
-                <label>Options <span id="wOptVal">15%</span></label>
-                <input type="range" id="wOptions" min="0" max="50" value="15" oninput="updateWeight('Options')">
-            </div>
-            <div class="flex-between mt-1">
-                <span class="text-sm" id="weightTotal">Total: 100%</span>
-                <button class="btn btn-sm" onclick="saveWeights()">Save Weights</button>
-            </div>
-        </div>
-    </div>
 </div>
 {% endblock %}
 
 {% block scripts %}
 <script>
 let watchlistData = null;
-
-function updateWeight(name) {
-    const val = document.getElementById('w' + name).value;
-    document.getElementById('w' + name + 'Val').textContent = val + '%';
-    const total = ['Momentum','Trend','Volume','Volatility','Options']
-        .reduce((s, n) => s + parseInt(document.getElementById('w' + n).value), 0);
-    document.getElementById('weightTotal').textContent = `Total: ${total}%`;
-    document.getElementById('weightTotal').style.color = total === 100 ? 'var(--green)' : 'var(--red)';
-}
 
 async function loadWatchlist() {
     try {

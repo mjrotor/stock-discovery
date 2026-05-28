@@ -117,16 +117,11 @@ function refreshPage() {
     loadDashboard();
 }
 
-async function loadDashboard() {
-    try {
-        const [portfolio, scores] = await Promise.all([
-            API.portfolio(),
-            API.scores()
-        ]);
-
-        // Summary cards
+function loadDashboard() {
+    API.portfolio().then(portfolio => {
+        API.scores().then(scores => {
         const p = portfolio?.portfolio || {};
-        const settings = portfolio?.settings || {};
+        const settings_d = portfolio?.settings || {};
         const totalVal = p.total_value || 0;
         const totalPnl = p.total_pnl || 0;
         const totalPnlPct = p.total_pnl_pct || 0;
@@ -139,9 +134,9 @@ async function loadDashboard() {
         document.getElementById('totalPnlPct').textContent = fmtPct(totalPnlPct);
         document.getElementById('totalPnlPct').className = 'sub ' + pnlClass(totalPnlPct);
         document.getElementById('cashAvailable').textContent = fmtCurrency(cash);
-        document.getElementById('cashReserve').textContent = `Reserve: ${((settings.min_cash_reserve_pct || 0.2) * 100).toFixed(0)}%`;
+        document.getElementById('cashReserve').textContent = `Reserve: ${((settings_d.min_cash_reserve_pct || 0.2) * 100).toFixed(0)}%`;
         document.getElementById('openCount').textContent = openPositions.length;
-        document.getElementById('maxPositions').textContent = `Max: ${settings.max_positions || 3}`;
+        document.getElementById('maxPositions').textContent = `Max: ${settings_d.max_positions || 3}`;
         document.getElementById('lastUpdated').textContent = portfolio?.last_updated ? 'Updated: ' + portfolio.last_updated : '';
 
         // Positions table
@@ -149,7 +144,7 @@ async function loadDashboard() {
         if (openPositions.length === 0) {
             posBody.innerHTML = '<tr><td colspan="9" class="text-muted">No open positions</td></tr>';
         } else {
-            const openSymbols = new Set(openPositions.map(p => p.symbol));
+            const openSymbols = new Set(openPositions.map(pos => pos.symbol));
             posBody.innerHTML = openPositions.map(pos => `
                 <tr class="${pos.pnl_pct >= 0 ? 'profit' : 'loss'}">
                     <td><strong><a href="/ticker/${pos.symbol}" style="color:inherit;text-decoration:none;">${pos.symbol}</a></strong></td>
@@ -159,7 +154,7 @@ async function loadDashboard() {
                     <td class="${pnlClass(pos.pnl)}">${pos.pnl >= 0 ? '+' : ''}${fmtCurrency(pos.pnl)}</td>
                     <td class="${pnlClass(pos.pnl_pct)}">${fmtPct(pos.pnl_pct)}</td>
                     <td><span class="score-badge ${scoreClass(pos.score_at_entry || 0)}">${pos.score_at_entry || '—'}</span></td>
-                    <td>${fmtCurrency(Number(pos.entry_price) * (1 - Math.abs(Number(settings.stop_loss_pct) || 0.1)))}</td>
+                    <td>${fmtCurrency(Number(pos.entry_price) * (1 - Math.abs(Number(settings_d.stop_loss_pct) || 0.1)))}</td>
                     <td><button class="btn btn-sm btn-danger" onclick="closePosition('${pos.id}', '${pos.symbol}')">Close</button></td>
                 </tr>
             `).join('');
@@ -191,19 +186,15 @@ async function loadDashboard() {
             `}).join('');
         }
 
-        // Portfolio value chart (from trade history)
+        // Charts
         loadPortfolioChart();
-    } catch (e) {
-        console.error('Dashboard load error:', e);
-        showToast('Error loading dashboard', 'error');
-    }
+        }).catch(e => { console.error('scores error:', e); showToast('Error loading scores', 'error'); });
+    }).catch(e => { console.error('portfolio error:', e); showToast('Error loading dashboard', 'error'); });
 }
 
-async function loadPortfolioChart() {
-    try {
-        const trades = await API.trades();
+function loadPortfolioChart() {
+    API.trades().then(trades => {
         const closed = trades.filter(t => (t.Action || '').toUpperCase() === 'SELL' || (t.Action || '').toUpperCase() === 'STOP_LOSS');
-        // Build cumulative P&L
         let running = 0;
         const labels = [];
         const data = [];
@@ -230,8 +221,7 @@ async function loadPortfolioChart() {
                 }]
             },
             options: {
-                responsive: true,
-                maintainAspectRatio: false,
+                responsive: true, maintainAspectRatio: false,
                 plugins: { legend: { display: false } },
                 scales: {
                     x: { grid: { color: '#30363d' }, ticks: { color: '#8b949e', font: { size: 11 } } },
@@ -240,7 +230,6 @@ async function loadPortfolioChart() {
             }
         });
 
-        // Daily P&L bar chart
         if (dailyPnlChart) dailyPnlChart.destroy();
         const dailyLabels = [];
         const dailyData = [];
@@ -265,8 +254,7 @@ async function loadPortfolioChart() {
                 }]
             },
             options: {
-                responsive: true,
-                maintainAspectRatio: false,
+                responsive: true, maintainAspectRatio: false,
                 plugins: { legend: { display: false } },
                 scales: {
                     x: { grid: { display: false }, ticks: { color: '#8b949e', font: { size: 11 } } },
@@ -274,9 +262,7 @@ async function loadPortfolioChart() {
                 }
             }
         });
-    } catch (e) {
-        console.error('Chart error:', e);
-    }
+    }).catch(e => console.error('Chart error:', e));
 }
 
 function buyPrompt(symbol, price, score) {
