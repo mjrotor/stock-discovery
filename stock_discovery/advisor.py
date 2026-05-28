@@ -159,11 +159,18 @@ def pick_positions(scores, total_value, cash):
 
 
 def execute_picks(picks):
-    """Add new picks to portfolio in Neon."""
+    """Add new picks to portfolio in Neon. Deduct cash for each pick."""
+    settings = db.get_settings()
+    cash = float(settings.get("cash", 0))
     for pos in picks:
+        cost = pos["cost"]
+        if cost > cash:
+            print(f"  ⚠️ Skip {pos['symbol']}: insufficient cash (${cost:.2f} > ${cash:.2f})")
+            continue
         db.insert_position(pos)
-        db.execute("UPDATE portfolio_settings SET cash = cash - %s, updated_at = NOW() WHERE id = 1", (pos["cost"],))
-        db.log_trade("BUY", pos["symbol"], pos["shares"], pos["entry_price"], pos["cost"],
+        db.execute("UPDATE portfolio_settings SET cash = cash - %s, updated_at = NOW() WHERE id = 1", (cost,))
+        cash -= cost
+        db.log_trade("BUY", pos["symbol"], pos["shares"], pos["entry_price"], cost,
                      reason="advisor", score=pos.get("score_at_entry"), position_id=pos["id"])
         print(f"  ✅ BUY {pos['shares']}x {pos['symbol']} @ ${pos['entry_price']:.2f} (score: {pos['score_at_entry']})")
 

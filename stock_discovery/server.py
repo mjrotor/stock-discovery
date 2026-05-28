@@ -255,7 +255,14 @@ def api_buy():
         cost = shares * price
 
         if cost > cash:
-            return jsonify({"error": "Insufficient cash"}), 400
+            return jsonify({"error": f"Insufficient cash: need ${cost:.2f}, have ${cash:.2f}"}), 400
+
+        # Also check total invested doesn't exceed starting balance
+        open_pos = db.get_open_positions()
+        total_invested = sum(float(p.get("cost", 0)) for p in open_pos) + cost
+        starting_balance = float(settings.get("starting_balance", 0))
+        if total_invested > starting_balance:
+            return jsonify({"error": f"Total invested (${total_invested:.2f}) would exceed starting balance (${starting_balance:.2f})"}), 400
 
         pos_id = f"{symbol}-{datetime.now().strftime('%Y%m%d%H%M')}"
         pos = {
