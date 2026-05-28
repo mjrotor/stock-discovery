@@ -223,17 +223,27 @@ def get_portfolio_summary():
     settings = get_settings()
     open_pos = get_open_positions()
 
+    cash = float(settings.get("cash", 0))
+    starting = float(settings.get("starting_balance", 1500))
+
+    # Position values and costs
     total_position_value = sum(
         (float(p["current_price"]) if p.get("current_price") else float(p["entry_price"])) * p["shares"]
         for p in open_pos
     )
-    cash = float(settings.get("cash", 0))
+    total_position_cost = sum(
+        float(p.get("cost", 0)) or (float(p["entry_price"]) * p["shares"])
+        for p in open_pos
+    )
     total_value = cash + total_position_value
-    starting = float(settings.get("starting_balance", 1500))
-    total_pnl = total_value - starting
-    total_pnl_pct = (total_value / starting - 1) * 100 if starting else 0
 
     closed = query("SELECT * FROM positions WHERE status = 'closed' ORDER BY exit_date DESC")
+
+    # P&L = position performance (open + closed), independent of deposits
+    realized_pnl = sum(float(p.get("pnl", 0)) for p in closed)
+    total_pnl = round(total_position_value - total_position_cost + realized_pnl, 2)
+    total_cost_all = total_position_cost + sum(float(p.get("cost", 0)) for p in closed)
+    total_pnl_pct = round((total_pnl / total_cost_all) * 100, 2) if total_cost_all else 0
 
     for pos in open_pos:
         ep = float(pos["entry_price"])
