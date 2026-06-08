@@ -83,13 +83,15 @@
                 <th>Name</th>
                 <th>Score</th>
                 <th>Price</th>
+                <th>Sector</th>
                 <th>Source</th>
                 <th>Factors</th>
+                <th>Reason</th>
                 <th>Actions</th>
             </tr>
         </thead>
         <tbody id="candidatesBody">
-            <tr><td colspan="7" class="loading">Loading...</td></tr>
+            <tr><td colspan="9" class="loading">Loading...</td></tr>
         </tbody>
     </table>
 </div>
@@ -242,7 +244,7 @@
             const res = await fetch(API + '/api/discovery/candidates?status=' + status);
             const data = await res.json();
             if (!data.length) {
-                tbody.innerHTML = '<tr><td colspan="7" class="empty">No ' + status + ' candidates</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="9" class="empty">No ' + status + ' candidates</td></tr>';
                 return;
             }
             tbody.innerHTML = data.map(c => `
@@ -251,13 +253,15 @@
                     <td>${c.name || '—'}</td>
                     <td>${c.composite != null ? c.composite.toFixed(1) : '—'}</td>
                     <td>${c.price ? '$' + parseFloat(c.price).toFixed(2) : '—'}</td>
+                    <td>${c.sector || '—'}</td>
                     <td>${c.source || '—'}</td>
                     <td>${formatFactors(c.factors)}</td>
+                    <td>${c.reject_reason || '—'}</td>
                     <td>${renderActions(c)}</td>
                 </tr>
             `).join('');
         } catch (e) {
-            tbody.innerHTML = '<tr><td colspan="7" class="error">Error loading</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="9" class="error">Error loading</td></tr>';
         }
     }
 

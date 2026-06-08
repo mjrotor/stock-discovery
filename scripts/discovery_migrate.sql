@@ -12,6 +12,7 @@ ALTER TABLE portfolio_settings
     "max_watchlist_size": 50,
     "score_threshold": 45,
     "min_factor_score": 7,
+    "max_per_sector": 3,
     "sources": {
         "yahoo_most_active": true,
         "yahoo_gainers": true,
@@ -30,10 +31,11 @@ ALTER TABLE portfolio_settings
     "skip_removed_days": 14
 }'::jsonb;
 
--- 2. Track discovery origin on watchlist
+-- 2. Track discovery origin + sector on watchlist
 ALTER TABLE watchlist ADD COLUMN IF NOT EXISTS discovered_at TIMESTAMPTZ;
 ALTER TABLE watchlist ADD COLUMN IF NOT EXISTS discovered_by VARCHAR(50) DEFAULT 'manual';
 ALTER TABLE watchlist ADD COLUMN IF NOT EXISTS removed_at TIMESTAMPTZ;
+ALTER TABLE watchlist ADD COLUMN IF NOT EXISTS sector VARCHAR(100) DEFAULT '';
 
 -- 3. Discovery candidates (pending approval queue)
 CREATE TABLE IF NOT EXISTS discovery_candidates (
@@ -44,8 +46,10 @@ CREATE TABLE IF NOT EXISTS discovery_candidates (
     factors     JSONB,
     price       DECIMAL(12,4),
     source      VARCHAR(50),
+    sector      VARCHAR(100) DEFAULT '',
     status      VARCHAR(20) DEFAULT 'pending',
     run_id      INT,
+    reject_reason TEXT DEFAULT '',
     created_at  TIMESTAMPTZ DEFAULT NOW(),
     resolved_at TIMESTAMPTZ,
     UNIQUE(symbol, run_id)
@@ -66,5 +70,27 @@ CREATE TABLE IF NOT EXISTS discovery_runs (
     details         JSONB,
     config_snapshot JSONB
 );
+
+-- 5. Static universes (cached index constituents)
+CREATE TABLE IF NOT EXISTS static_universes (
+    id              SERIAL PRIMARY KEY,
+    name            VARCHAR(50) NOT NULL UNIQUE,
+    description     TEXT,
+    tickers         JSONB NOT NULL DEFAULT '[]'::jsonb,
+    ticker_count    INT DEFAULT 0,
+    last_refreshed  TIMESTAMPTZ,
+    refresh_interval_days INT DEFAULT 90,
+    created_at      TIMESTAMPTZ DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Seed S&P 500 universe placeholder (populated on first discovery run)
+INSERT INTO static_universes (name, description, refresh_interval_days)
+VALUES ('sp500', 'S&P 500 Index Constituents', 90)
+ON CONFLICT (name) DO NOTHING;
+
+INSERT INTO static_universes (name, description, refresh_interval_days)
+VALUES ('nasdaq100', 'Nasdaq-100 Index Constituents', 90)
+ON CONFLICT (name) DO NOTHING;
 
 COMMIT;

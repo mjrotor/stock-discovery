@@ -397,7 +397,74 @@ def get_analytics():
     }
 
 
-# ─── Reset ──────────────────────────────────────────────────
+# ─── Discovery Helpers ──────────────────────────────────────
+
+def get_watchlist_with_sectors():
+    """Return active watchlist tickers including sector info."""
+    rows = query("""
+        SELECT w.*, p.sector as position_sector
+        FROM watchlist w
+        LEFT JOIN positions p ON w.symbol = p.symbol AND p.status = 'open'
+        WHERE w.active = TRUE
+        ORDER BY w.symbol
+    """)
+    return [dict(r) for r in rows]
+
+
+def get_sector_exposure():
+    """Count active watchlist tickers per sector. Returns {sector: count}."""
+    rows = query("""
+        SELECT COALESCE(NULLIF(sector, ''), 'Unknown') as sector, COUNT(*) as cnt
+        FROM watchlist
+        WHERE active = TRUE
+        GROUP BY COALESCE(NULLIF(sector, ''), 'Unknown')
+        ORDER BY cnt DESC
+    """)
+    return {r["sector"]: r["cnt"] for r in rows}
+
+
+def get_static_universe(name):
+    """Get cached universe tickers. Returns list of symbols or None if stale/missing."""
+    row = query_one("SELECT * FROM static_universes WHERE name = %s", (name,))
+    if not row:
+        return None
+    tickers = row.get("tickers", [])
+    if isinstance(tickers, str):
+        import json
+        tickers = json.loads(tickers)
+    return tickers or None
+
+
+def save_static_universe(name, tickers_list, description=None):
+    """Save or update a static universe."""
+    import json
+    execute(
+        """INSERT INTO static_universes (name, description, tickers, ticker_count, last_refreshed, updated_at)
+           VALUES (%s, %s, %s, %s, NOW(), NOW())
+           ON CONFLICT (name) DO UPDATE SET
+               tickers = EXCLUDED.tickers,
+               ticker_count = EXCLUDED.ticker_count,
+               last_refreshed = NOW(),
+               updated_at = NOW()""",
+        (name, description or name, json.dumps(tickers_list), len(tickers_list))
+    )
+
+
+def refresh_sp500_universe():
+    """Refresh S&P 500 constituents from Wikipedia. Returns count."""
+    import yfinance as yf
+    try:
+        table = yf.utils.get_html(
+            "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
+        )
+        df = table[0]
+        tickers = [str(row.get("Symbol", "")).strip() for _, row in df.iterrows() if str(row.get("Symbol", "")).strip()]
+        save_static_universe("sp500", tickers, "S&P 500 Index Constituents")
+        return len(tickers)
+    except Exception as e:
+        print(f"  ⚠️  Error refreshing S&P 500: {e}")
+        return 0
+
 
 def reset_portfolio():
     """Clear all positions and trades, reset to starting balance."""

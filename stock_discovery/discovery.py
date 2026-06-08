@@ -254,9 +254,27 @@ def run_discovery():
             time.sleep(1)
         elif source_key == "sp500_universe":
             print(f"  Fetching S&P 500 universe...")
-            tickers = fetch_sp500_tickers()
+            # Try cached universe first
+            cached = db.get_static_universe("sp500")
+            if cached:
+                tickers = []
+                for sym in cached:
+                    tickers.append({
+                        "symbol": sym,
+                        "name": sym,
+                        "price": 0, "volume": 0, "market_cap": 0,
+                        "avg_volume": 0, "change_pct": 0,
+                        "source": "sp500_universe",
+                    })
+                print(f"    → {len(tickers)} tickers (cached)")
+            else:
+                # Fallback: fetch from Wikipedia
+                tickers = fetch_sp500_tickers()
+                # Cache for next time
+                if tickers:
+                    db.save_static_universe("sp500", [t["symbol"] for t in tickers], "S&P 500 Index Constituents")
+                print(f"    → {len(tickers)} tickers (fresh)")
             raw_candidates.extend(tickers)
-            print(f"    → {len(tickers)} tickers")
             time.sleep(1)
 
     if not raw_candidates:
@@ -384,15 +402,39 @@ def run_discovery():
         (len(scored), len(rejected) + quick_rejected, "auto", json.dumps(config))
     )["id"]
 
-    # ── Step 9: Auto-add or queue ──
+    # ── Step 9: Auto-add or queue (with sector diversification) ──
     added = 0
     queued = 0
+    sector_queued = 0
 
     current_watchlist_count = len(existing)
     room_left = max_watchlist - current_watchlist_count
 
+    # Count current sector exposure from watchlist
+    sector_counts = db.get_sector_exposure()
+
+    max_per_sector = config.get("max_per_sector", 3)
+
     for c in passed[:max_per_run]:
         sym = c["symbol"].upper()
+        sec = c.get("sector", "") or ""
+
+        # Sector diversification check
+        if sec and sector_counts.get(sec, 0) >= max_per_sector:
+            # Queue for approval instead of auto-adding
+            db.execute(
+                """INSERT INTO discovery_candidates (symbol, name, composite, factors, price, source, sector, status, run_id, reject_reason)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, 'pending', %s, %s)
+                   ON CONFLICT (symbol, run_id) DO NOTHING""",
+                (sym, c.get("name", sym), c["composite"],
+                 json.dumps(c.get("factors", {})), c.get("price", 0),
+                 c.get("source", "auto"), sec, run_id,
+                 f"sector cap: {sec} already has {sector_counts[sec]} tickers")
+            )
+            queued += 1
+            sector_queued += 1
+            continue
+
         if auto_add and room_left > 0:
             db.add_ticker(
                 sym,
@@ -400,19 +442,22 @@ def run_discovery():
                 notes=f"Auto-discovered: {c.get('source', 'unknown')}"
             )
             db.execute(
-                "UPDATE watchlist SET discovered_at = NOW(), discovered_by = %s WHERE symbol = %s",
-                (f"discovery:{c.get('source', 'auto')}", sym)
+                """UPDATE watchlist SET discovered_at = NOW(), discovered_by = %s, sector = %s WHERE symbol = %s""",
+                (f"discovery:{c.get('source', 'auto')}", sec, sym)
             )
             added += 1
             room_left -= 1
+            # Update sector count tracking
+            if sec:
+                sector_counts[sec] = sector_counts.get(sec, 0) + 1
         else:
             db.execute(
-                """INSERT INTO discovery_candidates (symbol, name, composite, factors, price, source, status, run_id)
-                   VALUES (%s, %s, %s, %s, %s, %s, 'pending', %s)
+                """INSERT INTO discovery_candidates (symbol, name, composite, factors, price, source, sector, status, run_id)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, 'pending', %s)
                    ON CONFLICT (symbol, run_id) DO NOTHING""",
                 (sym, c.get("name", sym), c["composite"],
                  json.dumps(c.get("factors", {})), c.get("price", 0),
-                 c.get("source", "auto"), run_id)
+                 c.get("source", "auto"), sec, run_id)
             )
             queued += 1
 
@@ -420,13 +465,27 @@ def run_discovery():
     rejected_all = rejected[:20]
     for c in rejected_all:
         db.execute(
-            """INSERT INTO discovery_candidates (symbol, name, composite, factors, price, source, status, run_id)
-               VALUES (%s, %s, %s, %s, %s, %s, 'rejected', %s)
+            """INSERT INTO discovery_candidates (symbol, name, composite, factors, price, source, sector, status, run_id, reject_reason)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, 'rejected', %s, %s)
                ON CONFLICT (symbol, run_id) DO NOTHING""",
             (c["symbol"].upper(), c.get("name", c["symbol"]), c.get("composite", 0),
              json.dumps(c.get("factors", {})), c.get("price", 0),
-             c.get("source", "auto"), run_id)
+             c.get("source", "auto"), c.get("sector", ""), run_id,
+             c.get("reject_reason", ""))
         )
+
+    # Also save quick-rejected candidates
+    for c in to_process:
+        if c.get("reject_reason") and c not in scored:
+            db.execute(
+                """INSERT INTO discovery_candidates (symbol, name, composite, factors, price, source, sector, status, run_id, reject_reason)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, 'rejected', %s, %s)
+                   ON CONFLICT (symbol, run_id) DO NOTHING""",
+                (c["symbol"].upper(), c.get("name", c["symbol"]), c.get("composite", 0),
+                 json.dumps(c.get("factors", {})), c.get("price", 0),
+                 c.get("source", "auto"), c.get("sector", ""), run_id,
+                 c.get("reject_reason", ""))
+            )
 
     # Update run record
     db.execute(
@@ -444,13 +503,14 @@ def run_discovery():
         "rejected": len(rejected),
         "added": added,
         "queued": queued,
+        "sector_queued": sector_queued,
         "top_passed": [
-            {"symbol": c["symbol"], "composite": c["composite"], "price": c.get("price", 0)}
+            {"symbol": c["symbol"], "composite": c["composite"], "price": c.get("price", 0), "sector": c.get("sector", "")}
             for c in passed[:5]
         ],
     }
 
-    print(f"  ✅ Run complete: {added} added, {queued} queued, {len(rejected)} rejected, {quick_rejected} quick-rejected")
+    print(f"  ✅ Run complete: {added} added, {queued} queued ({sector_queued} sector-capped), {len(rejected)} rejected, {quick_rejected} quick-rejected")
     return result
 
 
