@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 Discovery Scanner — auto-find tickers from Yahoo Finance screens.
-Sources: most_active, gainers, losers, S&P 500 universe.
+Sources: day_gainers, day_losers, S&P 500 universe.
+Uses yfinance for all data (structured, reliable, no HTML scraping).
 Scores each candidate, applies filters, adds to watchlist or queues for approval.
 
 Reads/writes Neon Postgres via stock_discovery.db.
@@ -12,121 +13,63 @@ import json
 import sys
 import os
 import time
-import math
-from datetime import date, datetime
-from urllib.request import urlopen, Request
-from urllib.error import URLError, HTTPError
+from datetime import datetime
+
+import yfinance as yf
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from stock_discovery import db
-from stock_discovery.scorer import fetch_chart, score_ticker, WEIGHTS
+from stock_discovery.scorer import fetch_chart, score_ticker
 
-YAHOO_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; AppleWebKit/537.36",
-    "Accept": "application/json",
-}
 
-# ─── Yahoo Screen Scrapers ──────────────────────────────────
+# ─── Yahoo Finance Data via yfinance ─────────────────────────
 
 def fetch_yahoo_screen(screen_type, count=50):
     """
-    Fetch tickers from Yahoo Finance screens.
-    screen_type: 'most_active', 'gainers', 'losers', 'trending'
-    Returns list of {symbol, name, price, volume, market_cap}
+    Fetch tickers from Yahoo Finance screens using yfinance.
+    screen_type: 'day_gainers', 'day_losers', 'growth_technology_stocks', etc.
+    Returns list of {symbol, name, price, volume, market_cap, avg_volume, sector, source}
     """
-    url = f"https://finance.yahoo.com/screener/predefined/{screen_type}?count={count}"
-    req = Request(url, headers={
-        **YAHOO_HEADERS,
-        "Accept": "text/html,application/xhtml+xml",
-    })
     try:
-        with urlopen(req, timeout=15) as resp:
-            html = resp.read().decode("utf-8", errors="ignore")
-        # Extract JSON data from Yahoo's embedded payload
-        # Yahoo embeds quote data in window.YAHOO = ... or similar
-        # Fallback: extract from FinStreamer data
-        return _parse_yahoo_screen_html(html, screen_type)
+        result = yf.screen(screen_type, count=count)
+        quotes = result.get("quotes", [])
+        tickers = []
+        for q in quotes:
+            sym = q.get("symbol", "")
+            if not sym or sym.startswith("^"):
+                continue
+            tickers.append({
+                "symbol": sym,
+                "name": q.get("shortName", q.get("longName", sym)),
+                "price": q.get("regularMarketPrice", 0) or 0,
+                "volume": q.get("regularMarketVolume", 0) or 0,
+                "market_cap": q.get("marketCap", 0) or 0,
+                "avg_volume": q.get("averageDailyVolume3Month", 0) or 0,
+                "change_pct": q.get("regularMarketChangePercent", 0) or 0,
+                "source": screen_type,
+            })
+        return tickers
     except Exception as e:
         print(f"  ⚠️  Error fetching {screen_type}: {e}", file=sys.stderr)
         return []
 
 
-def _parse_yahoo_screen_html(html, screen_type):
-    """Parse Yahoo Finance screener HTML to extract ticker data."""
-    import re
-    tickers = []
-
-    # Yahoo embeds data in <script> tags as JSON
-    # Look for the FinStreamer quotes data
-    patterns = [
-        r'"quotes":\s*(\[.*?\])\s*[,}]',
-        r'"results":\s*(\{.*?"quotes":\s*(\[.*?\]))',
-    ]
-
-    for pattern in patterns:
-        matches = re.findall(pattern, html, re.DOTALL)
-        for match in matches:
-            try:
-                if isinstance(match, tuple):
-                    match = match[-1]
-                quotes = json.loads(match)
-                if isinstance(quotes, list):
-                    for q in quotes:
-                        sym = q.get("symbol", "")
-                        if sym and not sym.startswith("^"):
-                            tickers.append({
-                                "symbol": sym,
-                                "name": q.get("shortName", q.get("longName", sym)),
-                                "price": q.get("regularMarketPrice", 0),
-                                "volume": q.get("regularMarketVolume", 0),
-                                "market_cap": q.get("marketCap", 0),
-                                "avg_volume": q.get("averageDailyVolume3Month", 0),
-                                "change_pct": q.get("regularMarketChangePercent", 0),
-                                "source": screen_type,
-                            })
-                    if tickers:
-                        return tickers
-            except (json.JSONDecodeError, KeyError):
-                continue
-
-    # Fallback: regex extract symbol/name pairs from table rows
-    if not tickers:
-        row_pattern = r'data-symbol="([^"]+)"[^>]*>.*?<td[^>]*>(.*?)</td>'
-        for match in re.finditer(row_pattern, html, re.DOTALL):
-            sym = match.group(1)
-            name = re.sub(r'<[^>]+>', '', match.group(2)).strip()
-            if sym and not sym.startswith("^"):
-                tickers.append({
-                    "symbol": sym,
-                    "name": name or sym,
-                    "price": 0,
-                    "volume": 0,
-                    "market_cap": 0,
-                    "avg_volume": 0,
-                    "change_pct": 0,
-                    "source": screen_type,
-                })
-
-    return tickers
-
-
 def fetch_sp500_tickers():
-    """Fetch S&P 500 constituent tickers from Wikipedia."""
-    url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
-    req = Request(url, headers=YAHOO_HEADERS)
+    """
+    Fetch S&P 500 constituent tickers from Wikipedia.
+    Bootstrapping source — refreshed quarterly is fine.
+    """
     try:
-        with urlopen(req, timeout=15) as resp:
-            html = resp.read().decode("utf-8", errors="ignore")
-        import re
+        table = yf.utils.get_html("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies")
+        df = table[0]  # First table is the constituents
         tickers = []
-        # Extract symbols from the first column of the wikitable
-        for match in re.finditer(r'<td>([A-Z]{1,5})</td>', html):
-            sym = match.group(1)
+        for _, row in df.iterrows():
+            sym = str(row.get("Symbol", "")).strip()
             if sym:
                 tickers.append({
                     "symbol": sym,
-                    "name": sym,
+                    "name": str(row.get("Security", sym)),
                     "price": 0,
                     "volume": 0,
                     "market_cap": 0,
@@ -140,51 +83,90 @@ def fetch_sp500_tickers():
         return []
 
 
-def fetch_yahoo_quotes_batch(symbols):
+def fetch_quotes_batch(symbols):
     """
-    Fetch quote data for multiple symbols in one call.
-    Returns dict of symbol -> quote data.
+    Fetch quote data for multiple symbols using yfinance batch download.
+    Returns dict of symbol -> {price, volume, avg_volume, market_cap, name, sector, float, short_pct}
     """
     if not symbols:
         return {}
-    # Yahoo Finance quote API (batch)
-    url = f"https://query1.finance.yahoo.com/v7/finance/quote?symbols={','.join(symbols)}"
-    req = Request(url, headers=YAHOO_HEADERS)
+
+    results = {}
+    # yfinance.Tickers fetches all at once
     try:
-        with urlopen(req, timeout=15) as resp:
-            data = json.loads(resp.read().decode())
-        results = {}
-        for q in data.get("quoteResponse", {}).get("result", []):
-            sym = q.get("symbol", "")
-            if sym:
-                results[sym] = {
-                    "price": q.get("regularMarketPrice", 0),
-                    "volume": q.get("regularMarketVolume", 0),
-                    "avg_volume": q.get("averageDailyVolume3Month", 0),
-                    "market_cap": q.get("marketCap", 0),
-                    "change_pct": q.get("regularMarketChangePercent", 0),
-                    "name": q.get("shortName", sym),
+        tickers_obj = yf.Tickers(" ".join(symbols))
+        for sym in symbols:
+            sym_upper = sym.upper()
+            try:
+                t = tickers_obj.tickers.get(sym) or tickers_obj.tickers.get(sym_upper)
+                if not t:
+                    continue
+                info = t.info
+                results[sym_upper] = {
+                    "price": info.get("regularMarketPrice", 0) or 0,
+                    "volume": info.get("regularMarketVolume", 0) or 0,
+                    "avg_volume": info.get("averageDailyVolume3Month", 0) or 0,
+                    "market_cap": info.get("marketCap", 0) or 0,
+                    "avg_volume_10d": info.get("averageDailyVolume10Day", 0) or 0,
+                    "change_pct": info.get("regularMarketChangePercent", 0) or 0,
+                    "name": info.get("shortName", sym_upper),
+                    "sector": info.get("sector", ""),
+                    "float_shares": info.get("floatShares", 0) or 0,
+                    "short_pct": info.get("shortPercentOfFloat", 0) or 0,
+                    "earnings_date": info.get("earningsTimestamp", 0) or 0,
                 }
-        return results
+            except Exception as e:
+                print(f"  ⚠️  Error fetching {sym}: {e}", file=sys.stderr)
     except Exception as e:
-        print(f"  ⚠️  Error fetching batch quotes: {e}", file=sys.stderr)
-        return {}
+        print(f"  ⚠️  Error in batch quote fetch: {e}", file=sys.stderr)
+
+    return results
+
+
+# ─── Quick Reject (cheap pre-score filters) ─────────────────
+
+def quick_reject(candidate):
+    """
+    Fast negative screen before expensive scoring.
+    Returns (rejected: bool, reason: str)
+    """
+    price = candidate.get("price", 0) or 0
+    if price <= 0:
+        return True, "no price data"
+    if price < 1.0:
+        return True, f"price ${price:.2f} < $1.00 (penny stock)"
+
+    avg_vol = candidate.get("avg_volume", 0) or candidate.get("volume", 0) or 0
+    if avg_vol < 50000:
+        return True, f"avg_vol {avg_vol:,} < 50,000"
+
+    mcap = candidate.get("market_cap", 0) or 0
+    if mcap > 0 and mcap < 100_000_000:
+        return True, f"mcap ${mcap:,.0f} < $100M"
+
+    # High short interest — likely a short squeeze candidate, too risky
+    short_pct = candidate.get("short_pct", 0) or 0
+    if short_pct > 0.20:
+        return True, f"short interest {short_pct:.0%} > 20%"
+
+    # Low float — easily manipulated
+    float_shares = candidate.get("float_shares", 0) or 0
+    if 0 < float_shares < 10_000_000:
+        return True, f"low float {float_shares:,.0f} shares"
+
+    return False, ""
 
 
 # ─── Discovery Engine ───────────────────────────────────────
 
 def get_discovery_config():
     """Get discovery config from portfolio_settings.discovery_config JSONB."""
-    settings = db.get_settings()
-    config = settings.get("discovery_config", {})
-    if isinstance(config, str):
-        config = json.loads(config)
-    return config
+    return db.get_discovery_config()
 
 
 def apply_filters(candidate, config):
     """
-    Apply discovery filters to a candidate.
+    Apply discovery filters to a scored candidate.
     Returns (passed: bool, reason: str)
     """
     filters = config.get("filters", {})
@@ -213,7 +195,7 @@ def apply_filters(candidate, config):
     if composite < score_threshold:
         return False, f"score {composite:.1f} < threshold {score_threshold}"
 
-    # Check no factor is below minimum (unless it's options which may be 0)
+    # Check no factor is below minimum (except options which may be 0)
     factors = candidate.get("factors", {})
     for factor_name, factor_val in factors.items():
         if factor_name == "options":
@@ -228,13 +210,13 @@ def run_discovery():
     """
     Main discovery pipeline.
     1. Fetch candidates from enabled sources
-    2. Deduplicate
-    3. Score each candidate
-    4. Apply filters
-    5. Auto-add or queue for approval
-    6. Log run in discovery_runs
-
-    Returns dict with run results.
+    2. Deduplicate + filter out existing/removed/pending
+    3. Batch fetch quote data (price, volume, mcap, sector, float, short interest)
+    4. Quick reject (cheap filters before scoring)
+    5. Score remaining candidates
+    6. Apply full filters
+    7. Auto-add or queue for approval
+    8. Log run in discovery_runs
     """
     config = get_discovery_config()
     if not config.get("enabled", False):
@@ -246,87 +228,91 @@ def run_discovery():
     auto_add = config.get("auto_add", True)
     skip_removed_days = config.get("skip_removed_days", 14)
 
-    print(f"🔍 Discovery run started — sources: {[k for k,v in sources.items() if v]}")
+    enabled_sources = [k for k, v in sources.items() if v]
+    print(f"🔍 Discovery run started — sources: {enabled_sources}")
 
     # ── Step 1: Collect candidates from sources ──
     raw_candidates = []
-    source_map = {
-        "yahoo_most_active": ("most_active", 50),
-        "yahoo_gainers": ("gainers", 50),
-        "yahoo_losers": ("losers", 50),
+
+    # Map config source keys to yfinance screen names
+    screen_map = {
+        "yahoo_gainers": ("day_gainers", 50),
+        "yahoo_losers": ("day_losers", 50),
+        "yahoo_most_active": ("most_active", 50),  # May not work, but try
     }
 
     for source_key, enabled in sources.items():
         if not enabled:
             continue
-        if source_key in source_map:
-            screen_type, count = source_map[source_key]
-            print(f"  Fetching {screen_type}...")
-            tickers = fetch_yahoo_screen(screen_type, count)
+        if source_key in screen_map:
+            screen_name, count = screen_map[source_key]
+            print(f"  Fetching {screen_name}...")
+            # Use yfinance screen
+            tickers = fetch_yahoo_screen(screen_name, count)
             raw_candidates.extend(tickers)
             print(f"    → {len(tickers)} tickers")
-            time.sleep(1.5)
+            time.sleep(1)
         elif source_key == "sp500_universe":
             print(f"  Fetching S&P 500 universe...")
             tickers = fetch_sp500_tickers()
             raw_candidates.extend(tickers)
             print(f"    → {len(tickers)} tickers")
-            time.sleep(1.5)
+            time.sleep(1)
 
     if not raw_candidates:
         return {"ok": True, "candidates": 0, "added": 0, "message": "No candidates from sources"}
 
-    # ── Step 2: Deduplicate ──
-    seen = set()
-    unique = []
+    # ── Step 2: Deduplicate (prefer gainers > losers > most_active > sp500) ──
+    priority = {"day_gainers": 1, "day_losers": 2, "most_active": 3, "sp500_universe": 4}
+    seen = {}
     for c in raw_candidates:
         sym = c["symbol"].upper()
-        if sym not in seen:
-            seen.add(sym)
-            unique.append(c)
+        src_priority = priority.get(c.get("source", ""), 99)
+        if sym not in seen or src_priority < seen[sym]["_priority"]:
+            c["_priority"] = src_priority
+            seen[sym] = c
+    unique = [c for c in seen.values()]
     print(f"  Unique candidates: {len(unique)}")
 
-    # ── Step 3: Filter out existing + recently removed ──
+    # ── Step 3: Filter out existing + recently removed + pending ──
     existing = db.get_active_tickers()
     existing_syms = {t["symbol"] for t in existing}
 
-    # Check recently removed
     recently_removed = db.query(
         "SELECT symbol FROM watchlist WHERE active = FALSE AND removed_at > NOW() - INTERVAL '%s days'",
         (skip_removed_days,)
     )
     removed_syms = {r["symbol"] for r in recently_removed}
 
-    # Check current candidates
-    current_candidates = db.query(
+    current_pending = db.query(
         "SELECT symbol FROM discovery_candidates WHERE status = 'pending'"
     )
-    pending_syms = {c["symbol"] for c in current_candidates}
+    pending_syms = {c["symbol"] for c in current_pending}
 
-    to_score = []
+    to_process = []
     skipped = 0
     for c in unique:
         sym = c["symbol"].upper()
-        if sym in existing_syms or sym in removed_syms or sym in pending_syms:
+        if sym in existing_syms:
             skipped += 1
             continue
-        to_score.append(c)
+        if sym in removed_syms:
+            skipped += 1
+            continue
+        if sym in pending_syms:
+            skipped += 1
+            continue
+        to_process.append(c)
 
     print(f"  Skipped (existing/removed/pending): {skipped}")
-    print(f"  To score: {len(to_score)}")
+    print(f"  To process: {len(to_process)}")
 
-    # ── Step 4: Batch fetch quote data for price/volume/mcap ──
-    batch_size = 100
-    all_quotes = {}
-    for i in range(0, len(to_score), batch_size):
-        batch = [c["symbol"] for c in to_score[i:i+batch_size]]
-        quotes = fetch_yahoo_quotes_batch(batch)
-        all_quotes.update(quotes)
-        if i + batch_size < len(to_score):
-            time.sleep(1)
+    # ── Step 4: Batch fetch quote data ──
+    symbols_to_fetch = [c["symbol"] for c in to_process]
+    all_quotes = fetch_quotes_batch(symbols_to_fetch)
 
     # Enrich candidates with quote data
-    for c in to_score:
+    for c in to_process:
         sym = c["symbol"].upper()
         if sym in all_quotes:
             q = all_quotes[sym]
@@ -335,10 +321,27 @@ def run_discovery():
             c["avg_volume"] = q.get("avg_volume", c.get("avg_volume", 0))
             c["market_cap"] = q.get("market_cap", c.get("market_cap", 0))
             c["change_pct"] = q.get("change_pct", c.get("change_pct", 0))
+            c["float_shares"] = q.get("float_shares", 0)
+            c["short_pct"] = q.get("short_pct", 0)
+            c["sector"] = q.get("sector", "")
             if q.get("name"):
                 c["name"] = q["name"]
 
-    # ── Step 5: Score each candidate ──
+    # ── Step 5: Quick reject (cheap filters before scoring) ──
+    to_score = []
+    quick_rejected = 0
+    for c in to_process:
+        rejected, reason = quick_reject(c)
+        if rejected:
+            c["reject_reason"] = reason
+            quick_rejected += 1
+            continue
+        to_score.append(c)
+
+    print(f"  Quick rejected: {quick_rejected}")
+    print(f"  To score: {len(to_score)}")
+
+    # ── Step 6: Score each candidate (expensive — OHLCV fetch + 5-factor) ──
     scored = []
     for i, c in enumerate(to_score):
         sym = c["symbol"].upper()
@@ -361,7 +364,7 @@ def run_discovery():
     scored.sort(key=lambda x: x.get("composite", 0), reverse=True)
     print(f"  Scored: {len(scored)}")
 
-    # ── Step 6: Apply filters ──
+    # ── Step 7: Apply full filters ──
     passed = []
     rejected = []
     for c in scored:
@@ -374,31 +377,28 @@ def run_discovery():
 
     print(f"  Passed filters: {len(passed)}, Rejected: {len(rejected)}")
 
-    # ── Step 7: Create run record ──
+    # ── Step 8: Create run record ──
     run_id = db.execute_returning(
         """INSERT INTO discovery_runs (candidates, rejected, source, config_snapshot)
            VALUES (%s, %s, %s, %s) RETURNING id""",
-        (len(scored), len(rejected), "auto", json.dumps(config))
+        (len(scored), len(rejected) + quick_rejected, "auto", json.dumps(config))
     )["id"]
 
-    # ── Step 8: Auto-add or queue ──
+    # ── Step 9: Auto-add or queue ──
     added = 0
     queued = 0
 
-    # Check watchlist size limit
     current_watchlist_count = len(existing)
     room_left = max_watchlist - current_watchlist_count
 
     for c in passed[:max_per_run]:
         sym = c["symbol"].upper()
         if auto_add and room_left > 0:
-            # Auto-add to watchlist
             db.add_ticker(
                 sym,
                 name=c.get("name", sym),
                 notes=f"Auto-discovered: {c.get('source', 'unknown')}"
             )
-            # Mark discovered_by
             db.execute(
                 "UPDATE watchlist SET discovered_at = NOW(), discovered_by = %s WHERE symbol = %s",
                 (f"discovery:{c.get('source', 'auto')}", sym)
@@ -406,7 +406,6 @@ def run_discovery():
             added += 1
             room_left -= 1
         else:
-            # Queue as candidate
             db.execute(
                 """INSERT INTO discovery_candidates (symbol, name, composite, factors, price, source, status, run_id)
                    VALUES (%s, %s, %s, %s, %s, %s, 'pending', %s)
@@ -417,8 +416,9 @@ def run_discovery():
             )
             queued += 1
 
-    # Save rejected candidates too (for analytics)
-    for c in rejected[:20]:  # Cap at 20 rejected
+    # Save rejected candidates (for transparency/analytics)
+    rejected_all = rejected[:20]
+    for c in rejected_all:
         db.execute(
             """INSERT INTO discovery_candidates (symbol, name, composite, factors, price, source, status, run_id)
                VALUES (%s, %s, %s, %s, %s, %s, 'rejected', %s)
@@ -437,7 +437,9 @@ def run_discovery():
     result = {
         "ok": True,
         "run_id": run_id,
-        "candidates": len(scored),
+        "candidates": len(scored) + quick_rejected,
+        "quick_rejected": quick_rejected,
+        "scored": len(scored),
         "passed": len(passed),
         "rejected": len(rejected),
         "added": added,
@@ -448,7 +450,7 @@ def run_discovery():
         ],
     }
 
-    print(f"  ✅ Run complete: {added} added, {queued} queued, {len(rejected)} rejected")
+    print(f"  ✅ Run complete: {added} added, {queued} queued, {len(rejected)} rejected, {quick_rejected} quick-rejected")
     return result
 
 
