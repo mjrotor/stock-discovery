@@ -687,6 +687,93 @@ def api_deposit():
         return jsonify({"error": str(e)}), 500
 
 
+# ─── API: Discovery ─────────────────────────────────────────
+
+@app.route("/api/discovery/config", methods=["GET"])
+def api_discovery_config():
+    try:
+        config = db.get_discovery_config()
+        return jsonify(config)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/discovery/config", methods=["POST"])
+@require_auth
+def api_discovery_config_update():
+    try:
+        data = request.json
+        db.execute(
+            "UPDATE portfolio_settings SET discovery_config = %s, updated_at = NOW() WHERE id = 1",
+            (json.dumps(data),)
+        )
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/discovery/run", methods=["POST"])
+@require_api_key
+def api_discovery_run():
+    """Run discovery pipeline. Requires ADVISORY_API_KEY."""
+    try:
+        from stock_discovery.discovery import run_discovery
+        result = run_discovery()
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/discovery/candidates", methods=["GET"])
+def api_discovery_candidates():
+    try:
+        status = request.args.get("status", "pending")
+        rows = db.query(
+            "SELECT * FROM discovery_candidates WHERE status = %s ORDER BY composite DESC",
+            (status,)
+        )
+        return jsonify([dict(r) for r in rows])
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/discovery/candidates/<int:candidate_id>/approve", methods=["POST"])
+@require_auth
+def api_discovery_approve(candidate_id):
+    try:
+        from stock_discovery.discovery import approve_candidate
+        result = approve_candidate(candidate_id)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/discovery/candidates/<int:candidate_id>/reject", methods=["POST"])
+@require_auth
+def api_discovery_reject(candidate_id):
+    try:
+        from stock_discovery.discovery import reject_candidate
+        result = reject_candidate(candidate_id)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/discovery/runs", methods=["GET"])
+def api_discovery_runs():
+    try:
+        rows = db.query("SELECT * FROM discovery_runs ORDER BY run_date DESC LIMIT 20")
+        return jsonify([dict(r) for r in rows])
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/discovery")
+@require_auth
+def discovery_page():
+    return render_template("discovery.html")
+
+
 # ─── Run ────────────────────────────────────────────────────
 
 if __name__ == "__main__":

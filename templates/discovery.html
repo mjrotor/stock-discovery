@@ -1,0 +1,368 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Discovery</h1>
+    <div class="header-actions">
+        <button class="btn btn-primary" id="btnRunDiscovery">🔍 Run Discovery</button>
+        <button class="btn btn-secondary" id="btnConfig">⚙️ Config</button>
+    </div>
+</div>
+
+<!-- Stats Row -->
+<div class="stats-row" id="discStats">
+    <div class="stat-card">
+        <div class="stat-label">Status</div>
+        <div class="stat-value" id="discStatus">—</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Pending</div>
+        <div class="stat-value" id="discPending">—</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Last Run</div>
+        <div class="stat-value" id="discLastRun">—</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Total Added</div>
+        <div class="stat-value" id="discTotalAdded">—</div>
+    </div>
+</div>
+
+<!-- Config Panel (hidden by default) -->
+<div class="card" id="configPanel" style="display:none;">
+    <h3>Discovery Configuration</h3>
+    <form id="configForm">
+        <div class="form-row">
+            <label>
+                <input type="checkbox" id="cfgEnabled"> Enabled
+            </label>
+        </div>
+        <div class="form-row">
+            <label>Max per run: <input type="number" id="cfgMaxPerRun" min="1" max="20" value="5"></label>
+            <label>Max watchlist: <input type="number" id="cfgMaxWatchlist" min="10" max="200" value="50"></label>
+        </div>
+        <div class="form-row">
+            <label>Score threshold: <input type="number" id="cfgScoreThreshold" min="0" max="100" value="45"></label>
+            <label>Min factor score: <input type="number" id="cfgMinFactor" min="0" max="10" step="0.5" value="7"></label>
+        </div>
+        <div class="form-row">
+            <label>Min price: $<input type="number" id="cfgMinPrice" min="1" max="100" value="5"></label>
+            <label>Max price: $<input type="number" id="cfgMaxPrice" min="50" max="1000" value="200"></label>
+        </div>
+        <div class="form-row">
+            <label>Min avg volume: <input type="number" id="cfgMinVol" min="10000" step="10000" value="200000"></label>
+            <label>Min market cap: $<input type="number" id="cfgMinMcap" min="1000000" step="1000000" value="500000000"></label>
+        </div>
+        <div class="form-row">
+            <label><input type="checkbox" id="cfgAutoAdd"> Auto-add to watchlist</label>
+            <label><input type="checkbox" id="cfgYahooActive"> Yahoo Most Active</label>
+            <label><input type="checkbox" id="cfgYahooGainers"> Yahoo Gainers</label>
+            <label><input type="checkbox" id="cfgSp500"> S&P 500 Universe</label>
+        </div>
+        <div class="form-actions">
+            <button type="submit" class="btn btn-primary">Save Config</button>
+        </div>
+    </form>
+</div>
+
+<!-- Candidates Table -->
+<div class="card">
+    <div class="card-header">
+        <h3>Candidates</h3>
+        <div class="tabs">
+            <button class="tab active" data-status="pending">Pending</button>
+            <button class="tab" data-status="approved">Approved</button>
+            <button class="tab" data-status="rejected">Rejected</button>
+        </div>
+    </div>
+    <table class="data-table" id="candidatesTable">
+        <thead>
+            <tr>
+                <th>Symbol</th>
+                <th>Name</th>
+                <th>Score</th>
+                <th>Price</th>
+                <th>Source</th>
+                <th>Factors</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody id="candidatesBody">
+            <tr><td colspan="7" class="loading">Loading...</td></tr>
+        </tbody>
+    </table>
+</div>
+
+<!-- Run History -->
+<div class="card">
+    <h3>Run History</h3>
+    <table class="data-table" id="runsTable">
+        <thead>
+            <tr>
+                <th>Date</th>
+                <th>Candidates</th>
+                <th>Added</th>
+                <th>Queued</th>
+                <th>Rejected</th>
+            </tr>
+        </thead>
+        <tbody id="runsBody">
+            <tr><td colspan="5" class="loading">Loading...</td></tr>
+        </tbody>
+    </table>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function() {
+    const API = '';
+    let currentStatus = 'pending';
+
+    // Load initial data
+    loadConfig();
+    loadCandidates('pending');
+    loadRuns();
+    loadStats();
+
+    // Tab switching
+    document.querySelectorAll('.tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            tab.classList.add('active');
+            currentStatus = tab.dataset.status;
+            loadCandidates(currentStatus);
+        });
+    });
+
+    // Config toggle
+    document.getElementById('btnConfig').addEventListener('click', () => {
+        const panel = document.getElementById('configPanel');
+        panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+    });
+
+    // Run discovery
+    document.getElementById('btnRunDiscovery').addEventListener('click', async () => {
+        const btn = document.getElementById('btnRunDiscovery');
+        btn.disabled = true;
+        btn.textContent = '⏳ Running...';
+        try {
+            const res = await fetch(API + '/api/discovery/run', { method: 'POST' });
+            const data = await res.json();
+            if (data.ok) {
+                showToast(`Discovery complete: ${data.added} added, ${data.queued} queued`, 'success');
+                loadCandidates(currentStatus);
+                loadRuns();
+                loadStats();
+            } else {
+                showToast(data.error || 'Discovery failed', 'error');
+            }
+        } catch (e) {
+            showToast('Error: ' + e.message, 'error');
+        } finally {
+            btn.disabled = false;
+            btn.textContent = '🔍 Run Discovery';
+        }
+    });
+
+    // Config form
+    document.getElementById('configForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const config = {
+            enabled: document.getElementById('cfgEnabled').checked,
+            max_per_run: parseInt(document.getElementById('cfgMaxPerRun').value),
+            max_watchlist_size: parseInt(document.getElementById('cfgMaxWatchlist').value),
+            score_threshold: parseInt(document.getElementById('cfgScoreThreshold').value),
+            min_factor_score: parseFloat(document.getElementById('cfgMinFactor').value),
+            auto_add: document.getElementById('cfgAutoAdd').checked,
+            require_approval: !document.getElementById('cfgAutoAdd').checked,
+            skip_removed_days: 14,
+            sources: {
+                yahoo_most_active: document.getElementById('cfgYahooActive').checked,
+                yahoo_gainers: document.getElementById('cfgYahooGainers').checked,
+                yahoo_losers: false,
+                sp500_universe: document.getElementById('cfgSp500').checked,
+                russell2000_universe: false
+            },
+            filters: {
+                min_price: parseFloat(document.getElementById('cfgMinPrice').value),
+                max_price: parseFloat(document.getElementById('cfgMaxPrice').value),
+                min_avg_volume: parseInt(document.getElementById('cfgMinVol').value),
+                min_market_cap: parseInt(document.getElementById('cfgMinMcap').value)
+            }
+        };
+        try {
+            const res = await fetch(API + '/api/discovery/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(config)
+            });
+            const data = await res.json();
+            if (data.ok) {
+                showToast('Config saved', 'success');
+            } else {
+                showToast(data.error || 'Save failed', 'error');
+            }
+        } catch (e) {
+            showToast('Error: ' + e.message, 'error');
+        }
+    });
+
+    async function loadConfig() {
+        try {
+            const res = await fetch(API + '/api/discovery/config');
+            const config = await res.json();
+            if (config && Object.keys(config).length) {
+                document.getElementById('cfgEnabled').checked = config.enabled || false;
+                document.getElementById('cfgMaxPerRun').value = config.max_per_run || 5;
+                document.getElementById('cfgMaxWatchlist').value = config.max_watchlist_size || 50;
+                document.getElementById('cfgScoreThreshold').value = config.score_threshold || 45;
+                document.getElementById('cfgMinFactor').value = config.min_factor_score || 7;
+                document.getElementById('cfgAutoAdd').checked = config.auto_add !== false;
+                document.getElementById('cfgMinPrice').value = (config.filters || {}).min_price || 5;
+                document.getElementById('cfgMaxPrice').value = (config.filters || {}).max_price || 200;
+                document.getElementById('cfgMinVol').value = (config.filters || {}).min_avg_volume || 200000;
+                document.getElementById('cfgMinMcap').value = (config.filters || {}).min_market_cap || 500000000;
+                const src = config.sources || {};
+                document.getElementById('cfgYahooActive').checked = src.yahoo_most_active !== false;
+                document.getElementById('cfgYahooGainers').checked = src.yahoo_gainers !== false;
+                document.getElementById('cfgSp500').checked = src.sp500_universe !== false;
+                document.getElementById('discStatus').textContent = config.enabled ? '🟢 Active' : '🔴 Disabled';
+            }
+        } catch (e) {
+            console.error('loadConfig error:', e);
+        }
+    }
+
+    async function loadCandidates(status) {
+        const tbody = document.getElementById('candidatesBody');
+        tbody.innerHTML = '<tr><td colspan="7" class="loading">Loading...</td></tr>';
+        try {
+            const res = await fetch(API + '/api/discovery/candidates?status=' + status);
+            const data = await res.json();
+            if (!data.length) {
+                tbody.innerHTML = '<tr><td colspan="7" class="empty">No ' + status + ' candidates</td></tr>';
+                return;
+            }
+            tbody.innerHTML = data.map(c => `
+                <tr>
+                    <td><strong>${c.symbol}</strong></td>
+                    <td>${c.name || '—'}</td>
+                    <td>${c.composite != null ? c.composite.toFixed(1) : '—'}</td>
+                    <td>${c.price ? '$' + parseFloat(c.price).toFixed(2) : '—'}</td>
+                    <td>${c.source || '—'}</td>
+                    <td>${formatFactors(c.factors)}</td>
+                    <td>${renderActions(c)}</td>
+                </tr>
+            `).join('');
+        } catch (e) {
+            tbody.innerHTML = '<tr><td colspan="7" class="error">Error loading</td></tr>';
+        }
+    }
+
+    function formatFactors(factors) {
+        if (!factors) return '—';
+        if (typeof factors === 'string') {
+            try { factors = JSON.parse(factors); } catch(e) { return '—'; }
+        }
+        const parts = [];
+        if (factors.momentum != null) parts.push(`M${factors.momentum.toFixed(0)}`);
+        if (factors.volume != null) parts.push(`V${factors.volume.toFixed(0)}`);
+        if (factors.trend != null) parts.push(`T${factors.trend.toFixed(0)}`);
+        return parts.join('|') || '—';
+    }
+
+    function renderActions(c) {
+        if (c.status === 'pending') {
+            return `<button class="btn btn-sm btn-success" onclick="approveCandidate(${c.id})">✓</button>
+                    <button class="btn btn-sm btn-danger" onclick="rejectCandidate(${c.id})">✗</button>`;
+        }
+        return c.status;
+    }
+
+    async function loadRuns() {
+        const tbody = document.getElementById('runsBody');
+        try {
+            const res = await fetch(API + '/api/discovery/runs');
+            const data = await res.json();
+            if (!data.length) {
+                tbody.innerHTML = '<tr><td colspan="5" class="empty">No runs yet</td></tr>';
+                return;
+            }
+            tbody.innerHTML = data.map(r => `
+                <tr>
+                    <td>${new Date(r.run_date).toLocaleString()}</td>
+                    <td>${r.candidates || 0}</td>
+                    <td>${r.added || 0}</td>
+                    <td>${r.pending || 0}</td>
+                    <td>${r.rejected || 0}</td>
+                </tr>
+            `).join('');
+        } catch (e) {
+            tbody.innerHTML = '<tr><td colspan="5" class="error">Error loading</td></tr>';
+        }
+    }
+
+    async function loadStats() {
+        try {
+            const [configRes, candidatesRes, runsRes] = await Promise.all([
+                fetch(API + '/api/discovery/config'),
+                fetch(API + '/api/discovery/candidates?status=pending'),
+                fetch(API + '/api/discovery/runs')
+            ]);
+            const config = await configRes.json();
+            const candidates = await candidatesRes.json();
+            const runs = await runsRes.json();
+
+            document.getElementById('discStatus').textContent = config.enabled ? '🟢 Active' : '🔴 Disabled';
+            document.getElementById('discPending').textContent = candidates.length;
+            document.getElementById('discLastRun').textContent = runs.length ? new Date(runs[0].run_date).toLocaleDateString() : '—';
+            document.getElementById('discTotalAdded').textContent = runs.reduce((s, r) => s + (r.added || 0), 0);
+        } catch (e) {
+            console.error('loadStats error:', e);
+        }
+    }
+
+    // Global functions for inline handlers
+    window.approveCandidate = async function(id) {
+        try {
+            const res = await fetch(API + '/api/discovery/candidates/' + id + '/approve', { method: 'POST' });
+            const data = await res.json();
+            if (data.ok) {
+                showToast(data.symbol + ' approved & added to watchlist', 'success');
+                loadCandidates(currentStatus);
+                loadStats();
+            } else {
+                showToast(data.error || 'Approve failed', 'error');
+            }
+        } catch (e) {
+            showToast('Error: ' + e.message, 'error');
+        }
+    };
+
+    window.rejectCandidate = async function(id) {
+        try {
+            const res = await fetch(API + '/api/discovery/candidates/' + id + '/reject', { method: 'POST' });
+            const data = await res.json();
+            if (data.ok) {
+                showToast('Candidate rejected', 'success');
+                loadCandidates(currentStatus);
+                loadStats();
+            }
+        } catch (e) {
+            showToast('Error: ' + e.message, 'error');
+        }
+    };
+
+    function showToast(msg, type) {
+        const container = document.getElementById('toastContainer');
+        const toast = document.createElement('div');
+        toast.className = 'toast toast-' + type;
+        toast.textContent = msg;
+        container.appendChild(toast);
+        setTimeout(() => toast.remove(), 3000);
+    }
+})();
+</script>
+{% endblock %}

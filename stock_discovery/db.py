@@ -96,6 +96,18 @@ def get_settings():
     return dict(row) if row else {}
 
 
+def get_discovery_config():
+    """Return discovery_config JSONB from portfolio_settings."""
+    row = query_one("SELECT discovery_config FROM portfolio_settings WHERE id = 1")
+    if not row:
+        return {}
+    config = row.get("discovery_config", {})
+    if isinstance(config, str):
+        import json
+        config = json.loads(config)
+    return config or {}
+
+
 def update_settings(data):
     """Update settings from a dict. Only updates provided keys."""
     allowed = {
