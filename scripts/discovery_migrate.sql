@@ -10,9 +10,10 @@ ALTER TABLE portfolio_settings
     "schedule": "0 8 * * 1-5",
     "max_per_run": 5,
     "max_watchlist_size": 50,
-    "score_threshold": 45,
-    "min_factor_score": 7,
+    "score_threshold": 50,
+    "min_factor_score": 5,
     "max_per_sector": 3,
+    "sp500_sample_size": 75,
     "sources": {
         "yahoo_most_active": true,
         "yahoo_gainers": true,

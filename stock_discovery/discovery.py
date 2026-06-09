@@ -58,25 +58,76 @@ def fetch_yahoo_screen(screen_type, count=50):
 def fetch_sp500_tickers():
     """
     Fetch S&P 500 constituent tickers from Wikipedia.
-    Bootstrapping source — refreshed quarterly is fine.
+    Uses HTML parser (no external deps beyond stdlib).
     """
     try:
-        table = yf.utils.get_html("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies")
-        df = table[0]  # First table is the constituents
+        from urllib.request import urlopen, Request
+        from html.parser import HTMLParser
+
+        class WikiTableParser(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.in_table = False
+                self.in_row = False
+                self.in_cell = False
+                self.current_cell = ''
+                self.rows = []
+                self.current_row = []
+                self.header_found = False
+
+            def handle_starttag(self, tag, attrs):
+                attrs_dict = dict(attrs)
+                if tag == 'table' and 'wikitable' in attrs_dict.get('class', ''):
+                    self.in_table = True
+                elif self.in_table and tag == 'tr':
+                    self.in_row = True
+                    self.current_row = []
+                elif self.in_row and tag in ('td', 'th'):
+                    self.in_cell = True
+                    self.current_cell = ''
+
+            def handle_endtag(self, tag):
+                if tag == 'table':
+                    self.in_table = False
+                elif self.in_table and tag == 'tr':
+                    self.in_row = False
+                    if self.current_row:
+                        if not self.header_found:
+                            self.header_found = True
+                        else:
+                            self.rows.append(self.current_row)
+                elif self.in_row and tag in ('td', 'th'):
+                    self.in_cell = False
+                    self.current_row.append(self.current_cell.strip())
+
+            def handle_data(self, data):
+                if self.in_cell:
+                    self.current_cell += data
+
+        url = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
+        req = Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urlopen(req, timeout=10) as resp:
+            html = resp.read().decode('utf-8')
+
+        p = WikiTableParser()
+        p.feed(html)
+
         tickers = []
-        for _, row in df.iterrows():
-            sym = str(row.get("Symbol", "")).strip()
-            if sym:
-                tickers.append({
-                    "symbol": sym,
-                    "name": str(row.get("Security", sym)),
-                    "price": 0,
-                    "volume": 0,
-                    "market_cap": 0,
-                    "avg_volume": 0,
-                    "change_pct": 0,
-                    "source": "sp500_universe",
-                })
+        for r in p.rows:
+            if len(r) >= 2:
+                sym = r[0].strip()
+                name = r[1].strip()
+                if sym and len(sym) <= 5 and sym.isalpha():
+                    tickers.append({
+                        "symbol": sym,
+                        "name": name,
+                        "price": 0,
+                        "volume": 0,
+                        "market_cap": 0,
+                        "avg_volume": 0,
+                        "change_pct": 0,
+                        "source": "sp500_universe",
+                    })
         return tickers
     except Exception as e:
         print(f"  ⚠️  Error fetching S&P 500: {e}", file=sys.stderr)
@@ -238,7 +289,7 @@ def run_discovery():
     screen_map = {
         "yahoo_gainers": ("day_gainers", 50),
         "yahoo_losers": ("day_losers", 50),
-        "yahoo_most_active": ("most_active", 50),  # May not work, but try
+        "yahoo_most_active": ("most_actives", 50),
     }
 
     for source_key, enabled in sources.items():
@@ -270,10 +321,18 @@ def run_discovery():
             else:
                 # Fallback: fetch from Wikipedia
                 tickers = fetch_sp500_tickers()
+                # Sample if too many (scoring 500+ is slow)
+                sample_size = config.get("sp500_sample_size", 75)
+                if len(tickers) > sample_size:
+                    import random
+                    random.seed()  # Non-deterministic
+                    tickers = random.sample(tickers, sample_size)
+                    print(f"    → {len(tickers)} tickers (sampled from 500)")
+                else:
+                    print(f"    → {len(tickers)} tickers (fresh)")
                 # Cache for next time
                 if tickers:
                     db.save_static_universe("sp500", [t["symbol"] for t in tickers], "S&P 500 Index Constituents")
-                print(f"    → {len(tickers)} tickers (fresh)")
             raw_candidates.extend(tickers)
             time.sleep(1)
 
