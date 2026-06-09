@@ -14,6 +14,7 @@ ALTER TABLE portfolio_settings
     "min_factor_score": 5,
     "max_per_sector": 3,
     "sp500_sample_size": 75,
+    "max_to_score": 30,
     "sources": {
         "yahoo_most_active": true,
         "yahoo_gainers": true,

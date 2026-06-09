@@ -418,6 +418,12 @@ def run_discovery():
     print(f"  Quick rejected: {quick_rejected}")
     print(f"  To score: {len(to_score)}")
 
+    # Cap scoring to avoid timeout on serverless (Vercel ~60s limit)
+    max_score = config.get("max_to_score", 30)
+    if len(to_score) > max_score:
+        print(f"  Capping scoring to {max_score} (from {len(to_score)})")
+        to_score = to_score[:max_score]
+
     # ── Step 6: Score each candidate (expensive — OHLCV fetch + 5-factor) ──
     scored = []
     for i, c in enumerate(to_score):
