@@ -222,16 +222,16 @@ def apply_filters(candidate, config):
     """
     filters = config.get("filters", {})
     min_price = filters.get("min_price", 5.0)
-    max_price = filters.get("max_price", 200.0)
+    max_price = filters.get("max_price", None)
     min_volume = filters.get("min_avg_volume", 200000)
-    min_mcap = filters.get("min_market_cap", 500_000_000)
+    min_mcap = filters.get("min_market_cap", 250_000_000)
     score_threshold = config.get("score_threshold", 45)
     min_factor = config.get("min_factor_score", 7)
 
     price = candidate.get("price", 0) or 0
     if price < min_price:
         return False, f"price ${price:.2f} < min ${min_price}"
-    if price > max_price:
+    if max_price is not None and price > max_price:
         return False, f"price ${price:.2f} > max ${max_price}"
 
     avg_vol = candidate.get("avg_volume", 0) or candidate.get("volume", 0) or 0
